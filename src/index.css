@@ -11,8 +11,8 @@
   --card: #0E163F;
   --card2: #101B4D;
   --line: rgba(255,255,255,.10);
-  --text: #EAF0FF;
-  --muted: rgba(234,240,255,.70);
+  --text: #FFFFFF;
+  --muted: rgba(255,255,255,.70);
   --good: #38F2A3;
   --warn: #FFD43B;
   --bad:  #FF4D6D;
@@ -738,7 +738,14 @@ tbody td input:focus, tbody td select:focus {
 .main-content.theme-soul .form-label,
 .main-content.theme-soul .section-label,
 .main-content.theme-soul thead th,
-.main-content.theme-soul tbody td { color: #3E2000; }
+.main-content.theme-soul tbody td,
+.main-content.theme-soul .topbar-title { color: #281400 !important; }
+
+.main-content.theme-soul .muted,
+.main-content.theme-soul .stat-label,
+.main-content.theme-soul .empty-state,
+.main-content.theme-soul .status-bar,
+.main-content.theme-soul .topbar-badge.badge-auditoria { color: #5A2E00 !important; }
 
 .main-content.theme-soul tbody td {
   background: rgba(255,248,220,.60);
@@ -754,12 +761,20 @@ tbody td input:focus, tbody td select:focus {
 
 .main-content.theme-soul input,
 .main-content.theme-soul select,
-.main-content.theme-soul textarea {
-  background: rgba(255, 143, 0, 0.1) !important;
-  border-color: rgba(255, 143, 0, 0.45) !important;
-  color: #3E2000 !important;
+.main-content.theme-soul textarea,
+.main-content.theme-soul input[type="text"],
+.main-content.theme-soul input[type="email"],
+.main-content.theme-soul input[type="date"],
+.main-content.theme-soul input[type="time"],
+.main-content.theme-soul input[type="number"],
+.main-content.theme-soul input[type="tel"],
+.main-content.theme-soul input[type="password"] {
+  background: rgba(40, 20, 0, 0.05) !important;
+  border-color: rgba(40, 20, 0, 0.25) !important;
+  color: #281400 !important;
 }
-.main-content.theme-soul input::placeholder { color: rgba(62, 32, 0, 0.45) !important; }
+.main-content.theme-soul input::placeholder,
+.main-content.theme-soul textarea::placeholder { color: rgba(62, 32, 0, 0.45) !important; }
 
 .main-content.theme-soul select option { background: #FFF8E1; color: #3E2000; }
 .main-content.theme-soul input:focus,
@@ -772,9 +787,9 @@ tbody td input:focus, tbody td select:focus {
 
 .main-content.theme-soul tbody td input,
 .main-content.theme-soul tbody td select {
-  background: rgba(255, 143, 0, 0.08) !important;
-  border-color: rgba(255, 143, 0, 0.25) !important;
-  color: #3E2000 !important;
+  background: rgba(40, 20, 0, 0.04) !important;
+  border-color: rgba(40, 20, 0, 0.15) !important;
+  color: #281400 !important;
 }
 .main-content.theme-soul tbody td input:focus,
 .main-content.theme-soul tbody td select:focus { border-color: rgba(200,100,0,.50); }
@@ -792,7 +807,7 @@ tbody td input:focus, tbody td select:focus {
 .main-content.theme-soul .btn-primary {
   background: linear-gradient(90deg, #FFB300, #FF8F00);
   border-color: rgba(255,143,0,.40);
-  color: #fff;
+  color: #281400;
 }
 .main-content.theme-soul .btn-primary:hover { background: linear-gradient(90deg, #FFA000, #E65100); }
 
@@ -842,6 +857,48 @@ tbody td input:focus, tbody td select:focus {
 
 .main-content.theme-soul thead th { background: rgba(255,220,100,.90); border-bottom-color: rgba(255,143,0,.30); }
 
+/* Override global de tipografia para Soul+ (evita claro no claro) */
+.main-content.theme-soul,
+.main-content.theme-soul h1,
+.main-content.theme-soul h2,
+.main-content.theme-soul h3,
+.main-content.theme-soul h4,
+.main-content.theme-soul h5,
+.main-content.theme-soul h6,
+.main-content.theme-soul p,
+.main-content.theme-soul span,
+.main-content.theme-soul strong,
+.main-content.theme-soul small,
+.main-content.theme-soul li,
+.main-content.theme-soul a,
+.main-content.theme-soul .tab-item,
+.main-content.theme-soul .tab-item:hover,
+.main-content.theme-soul .tab-item.active,
+.main-content.theme-soul .topbar-title,
+.main-content.theme-soul .card-title,
+.main-content.theme-soul .nav-badge,
+.main-content.theme-soul .row-num,
+.main-content.theme-soul .btn,
+.main-content.theme-soul .btn-primary,
+.main-content.theme-soul .btn-outline,
+.main-content.theme-soul .btn-ghost,
+.main-content.theme-soul .btn-icon,
+.main-content.theme-soul .btn-icon.danger,
+.main-content.theme-soul .card-header input,
+.main-content.theme-soul .card-header input[placeholder*="Buscar"] {
+  color: #281400 !important;
+}
+
+.main-content.theme-soul .tab-item.active {
+  border-bottom-color: #8D5200 !important;
+}
+
+.main-content.theme-soul input::placeholder,
+.main-content.theme-soul textarea::placeholder,
+.main-content.theme-soul .card-header input[placeholder*="Buscar"]::placeholder {
+  color: rgba(40,20,0,.55) !important;
+}
+
 /* ── RESPONSIVE ──────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   :root { --sidebar-w: 260px; }
@@ -883,110 +940,197 @@ tbody td input:focus, tbody td select:focus {
 .page-content > * { animation: fadeIn .2s ease; }
 
 /* ── MODO IMPRESSÃO (BOLETIM) ────────────────────────────────────── */
+.membros-list-print { color: var(--muted); }
+
 @media print {
-  /* Reset radical para evitar páginas em branco */
-  html, body {
-    margin: 0 !important;
-    padding: 0 !important;
-    height: auto !important;
+  /* Reset radical para contraste máximo */
+  html, body, .main-content, .page-content {
     background: white !important;
     color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Forçar preto absoluto em TODOS os textos e ícones */
+  * {
+    color: #000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    opacity: 1 !important;
   }
 
   .no-print { display: none !important; }
   
-  /* Ocultar elementos de navegação e botões */
+  /* Ocultar elementos de navegação */
   .sidebar, .topbar, .btn, .btn-icon, .tab-container, .td-actions, .status-bar, .badge-auditoria, .report-header {
     display: none !important;
   }
 
-  .layout { 
-    display: block !important; 
-    height: auto !important;
-    overflow: visible !important;
-  }
-  .main-content {
-    margin: 0 !important;
-    padding: 0 !important;
-    min-height: 0 !important;
-    background: white !important;
-    box-shadow: none !important;
-    display: block !important;
-    transform: none !important;
-  }
-  .page-content {
-    padding: 0 !important;
-    margin: 0 !important;
-    max-width: none !important;
-  }
-
+  .layout { display: block !important; }
+  
   /* Estilização das "Cartas" para Impressão */
   .card {
-    background: transparent !important;
+    background: white !important;
     border: none !important;
-    box-shadow: none !important;
-    margin-bottom: 25px !important;
-    page-break-inside: avoid;
+    margin-bottom: 20px !important;
+    page-break-inside: auto !important;
   }
   
   .card-header {
-    background: transparent !important;
-    border-bottom: 2px solid #333 !important;
-    padding: 0 0 5px 0 !important;
-    margin-bottom: 12px !important;
+    border-bottom: 2px solid #000 !important;
+    margin-bottom: 10px !important;
+    page-break-after: avoid !important;
   }
   
   .card-title {
-    color: black !important;
     font-size: 16pt !important;
     font-weight: 800 !important;
+    color: #000 !important;
+  }
+
+  /* Bloco de cada BASE individual */
+  .base-print-block {
+    page-break-inside: avoid !important;
+    margin-bottom: 15px !important;
+    border-bottom: 1px solid #eee !important;
+    padding-bottom: 5px !important;
+  }
+
+  /* Listas de Membros (Boletim) - Contraste Máximo */
+  .membros-list-print, .membros-list-print li, ul, li {
+    color: #000 !important;
+    font-weight: 500 !important;
+    opacity: 1 !important;
   }
 
   /* Tabelas estilo Boletim */
-  .table-wrap {
-    overflow: visible !important;
-    background: transparent !important;
-  }
-  
   table {
     border-collapse: collapse !important;
     width: 100% !important;
     font-size: 9pt !important;
-    table-layout: auto !important;
   }
   
   th {
     background: #f0f0f0 !important;
-    color: #000 !important;
-    border: 1px solid #ccc !important;
+    border: 1px solid #000 !important;
     padding: 6px !important;
-    text-transform: uppercase !important;
+    color: #000 !important;
   }
   
   td {
-    border: 1px solid #ddd !important;
+    border: 1px solid #666 !important;
     padding: 5px 8px !important;
-    color: black !important;
+    color: #000 !important;
   }
 
-  /* Chips e Badges na Impressão */
   .chip {
-    background: transparent !important;
-    border: 1px solid #999 !important;
-    color: black !important;
-    padding: 1px 4px !important;
-    font-size: 8pt !important;
+    border: 1px solid #000 !important;
+    color: #000 !important;
+    font-weight: bold !important;
   }
   
   details { display: block !important; }
   details summary {
     font-weight: bold !important;
-    border-bottom: 1px solid #eee !important;
-    padding-bottom: 3px !important;
+    border-bottom: 1px solid #000 !important;
     list-style: none !important;
   }
-  .details-content { display: block !important; }
+}
+/* ── Admin Hub Tabs ── */
+.admin-tabs-nav {
+  display: flex;
+  gap: 8px;
+  padding: 10px 15px;
+  background: rgba(0,0,0,0.05);
+  border-radius: 8px;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
 
-  h2, h3 { page-break-after: avoid; }
-  tr { page-break-inside: avoid; }
+.admin-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+  opacity: 0.7;
+}
+
+.admin-tab-btn:hover {
+  background: rgba(255,255,255,0.05);
+  opacity: 1;
+}
+
+.admin-tab-btn.active {
+  background: var(--c1);
+  color: white;
+  border-color: var(--c1);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  opacity: 1;
+}
+
+.theme-soul .admin-tab-btn.active {
+  background: #FF8F00;
+  color: #281400 !important;
+}
+
+.theme-soul .admin-tab-btn:hover {
+  background: rgba(255,143,0,.15);
+  color: #281400;
+  opacity: 1;
+}
+
+.admin-tab-btn .tab-icon {
+  font-size: 18px;
+}
+
+.admin-tab-btn .tab-text {
+  letter-spacing: 0.5px;
+}
+
+.code-block {
+  background: #1e1e1e;
+  color: #dcdcdc;
+  padding: 15px;
+  border-radius: 8px;
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+  border: 1px solid #333;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   FORCE OVERRIDE: Soul+ Theme Input Colors (FINAL RULE)
+   Esta regra FINAL deve vencer todas as anteriores
+   ════════════════════════════════════════════════════════════════ */
+.main-content.theme-soul input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+.main-content.theme-soul input[type="text"],
+.main-content.theme-soul input[type="email"],
+.main-content.theme-soul input[type="date"],
+.main-content.theme-soul input[type="time"],
+.main-content.theme-soul input[type="number"],
+.main-content.theme-soul input[type="tel"],
+.main-content.theme-soul input[type="password"],
+.main-content.theme-soul input[type="search"],
+.main-content.theme-soul textarea,
+.main-content.theme-soul select {
+  color: #281400 !important;
+  background-color: rgba(40, 20, 0, 0.05) !important;
+  border-color: rgba(40, 20, 0, 0.25) !important;
+}
+
+.main-content.theme-soul input:focus:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+.main-content.theme-soul textarea:focus,
+.main-content.theme-soul select:focus {
+  background-color: rgba(255, 143, 0, 0.15) !important;
+  border-color: #8D5200 !important;
+  color: #281400 !important;
 }

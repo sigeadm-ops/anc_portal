@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { useIgrejas } from '../hooks/useIgrejas'
-import { today } from '../utils/helpers'
+import { today, buildBaseLabel, findDuplicateBaseGroups, formatBaseId, normalizeBaseName } from '../utils/helpers'
 
 const EMPTY = {
   Tipo: '', Base: '',
@@ -20,6 +20,7 @@ export default function Bases() {
   const [form, setForm] = useState(EMPTY)
   const [editingId, setEditingId] = useState(null)
   const [search, setSearch] = useState('')
+  const [tipoFiltro, setTipoFiltro] = useState('')
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -38,6 +39,24 @@ export default function Bases() {
   // Cascata por IDs
   const distritosOpts = geo.getDistritos(form.id_regiao)
   const igrejasOpts = geo.getIgrejas(form.id_distritos)
+  const duplicateBaseGroups = useMemo(() => findDuplicateBaseGroups(data, { byTipo: true }), [data])
+
+  const duplicateLookup = useMemo(() => {
+    const map = new Set()
+    for (const group of duplicateBaseGroups) {
+      map.add(group.key)
+    }
+    return map
+  }, [duplicateBaseGroups])
+
+  const isCurrentNameDuplicated = useMemo(() => {
+    const key = `${String(form.Tipo || '').trim()}::${normalizeBaseName(form.Base)}`
+    if (!key) return false
+    return (data || []).some((base) => {
+      if (editingId && base.id_base === editingId) return false
+      return `${String(base.Tipo || '').trim()}::${normalizeBaseName(base.Base)}` === key
+    })
+  }, [data, form.Tipo, form.Base, editingId])
 
   function handleRegiaoChange(v) {
     set('id_regiao', v); set('id_distritos', ''); set('id_igrejas', '')
@@ -59,9 +78,14 @@ export default function Bases() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.Tipo || !form.Base || !form.id_igrejas) {
-      toast.error('Preencha: Tipo, Nome e Igreja.')
+    if (!form.Tipo || !form.Base || !form.id_regiao || !form.id_distritos || !form.id_igrejas) {
+      toast.error('Preencha: Tipo, Nome, Região, Distrito e Igreja.')
       return
+    }
+    if (isCurrentNameDuplicated) {
+      toast('Atenção: já existe outra base com esse mesmo nome. Confira igreja e ID antes de salvar.', {
+        icon: '⚠️',
+      })
     }
     const payload = {
       Tipo: form.Tipo,
@@ -97,13 +121,22 @@ export default function Bases() {
     if (editingId === id) cancelEdit()
   }
 
-  const filtered = data.filter(b =>
-    !search ||
-    [b.Base, b.Igreja_Nome, b.Distrito_Nome, b.Regiao_Nome, b.Coord]
-      .join(' ')
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  )
+  const filtered = data
+    .filter(b =>
+      (!tipoFiltro || b.Tipo === tipoFiltro) &&
+      (!search ||
+        [b.Base, b.Igreja_Nome, b.Igrejas, b.Distrito_Nome, b.Distritos, b.Regiao_Nome, b.Regiao, b.Coord]
+          .join(' ')
+          .toLowerCase()
+          .includes(search.toLowerCase()))
+    )
+    .sort((a, b) => (a.Base || '').localeCompare(b.Base || ''))
+
+  const inconsistentGeoBases = useMemo(() => {
+    return (data || []).filter(b => !b.id_regiao || !b.id_distritos || !b.id_igrejas)
+  }, [data])
+
+  const inconsistentGeoCount = inconsistentGeoBases.length
 
   return (
     <div>
@@ -129,6 +162,23 @@ export default function Bases() {
         </div>
 
         <form onSubmit={handleSubmit} style={{ padding: '20px' }}>
+          {duplicateBaseGroups.length > 0 && (
+            <div className="status-bar warn" style={{ marginBottom: 14 }}>
+              ⚠️ Foram encontrados {duplicateBaseGroups.length} nome{duplicateBaseGroups.length > 1 ? 's' : ''} de base repetido{duplicateBaseGroups.length > 1 ? 's' : ''} no mesmo tipo.<br />
+              {duplicateBaseGroups.slice(0, 3).map((group) => `${group.tipo}: ${group.nome} (${group.total}x)`).join(' · ')}
+              {duplicateBaseGroups.length > 3 ? ' · ...' : ''}
+            </div>
+          )}
+
+          {inconsistentGeoCount > 0 && (
+            <div className="status-bar err" style={{ marginBottom: 14 }}>
+              🚨 Existem {inconsistentGeoCount} base{inconsistentGeoCount > 1 ? 's' : ''} sem vínculo completo de região/distrito/igreja. Isso indica registro legado inconsistente e precisa correção.
+              <br />
+              {inconsistentGeoBases.slice(0, 5).map((b) => buildBaseLabel(b, { includeTipo: true })).join(' · ')}
+              {inconsistentGeoCount > 5 ? ' · ...' : ''}
+            </div>
+          )}
+
           <div className="form-grid">
             <div className="form-group">
               <label>Tipo *</label>
@@ -146,6 +196,11 @@ export default function Bases() {
                 placeholder="Ex: Base Águias"
                 required
               />
+              {isCurrentNameDuplicated && (
+                <small style={{ color: 'var(--warn)', fontWeight: 600 }}>
+                  Nome repetido detectado no mesmo tipo. Diferencie sempre por igreja e {formatBaseId(editingId || 'novo-id')}.
+                </small>
+              )}
             </div>
             <div className="form-group">
               <label>Região</label>
@@ -255,12 +310,19 @@ export default function Bases() {
               {filtered.length} de {data.length}
             </span>
           </div>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="🔍 Buscar base..."
-            style={{ width: 220 }}
-          />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select value={tipoFiltro} onChange={e => setTipoFiltro(e.target.value)} style={{ width: 140 }}>
+              <option value="">Todos os tipos</option>
+              <option value="G148 Teen">G148 Teen</option>
+              <option value="Soul+">Soul+</option>
+            </select>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="🔍 Buscar base..."
+              style={{ width: 220 }}
+            />
+          </div>
         </div>
 
         {isLoading ? (
@@ -292,9 +354,17 @@ export default function Bases() {
                         {b.Tipo}
                       </span>
                     </td>
-                    <td><strong>{b.Base}</strong></td>
-                    <td>{b.Distrito_Nome || '—'}</td>
-                    <td>{b.Igreja_Nome || '—'}</td>
+                    <td>
+                      <strong>{b.Base}</strong>
+                      {duplicateLookup.has(`${String(b.Tipo || '').trim()}::${normalizeBaseName(b.Base)}`) && (
+                        <span className="chip chip-warn" style={{ marginLeft: 8 }}>Nome repetido</span>
+                      )}
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                        {buildBaseLabel(b, { includeId: true, includeTipo: false })}
+                      </div>
+                    </td>
+                    <td>{b.Distrito_Nome || b.Distritos || '—'}</td>
+                    <td>{b.Igreja_Nome || b.Igrejas || '—'}</td>
                     <td>{b.Coord || '—'}</td>
                     <td>
                       <span className={`chip ${b.Status === 'Ativo' ? 'chip-good' : 'chip-muted'}`}>

@@ -61,3 +61,55 @@ export function chipClass(status) {
   }
   return map[status] || 'chip-muted'
 }
+
+export function normalizeBaseName(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+export function formatBaseId(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return 'sem-id'
+  return `#${raw.slice(-6).toUpperCase()}`
+}
+
+export function buildBaseLabel(base, options = {}) {
+  const { includeTipo = false, includeId = true } = options
+  const nome = String(base?.Base || '').trim() || 'Base sem nome'
+  const igreja = String(base?.Igreja_Nome || base?.Igrejas || '').trim() || 'Sem igreja'
+  const tipo = String(base?.Tipo || '').trim()
+
+  const parts = [nome, igreja]
+  if (includeTipo && tipo) parts.push(tipo)
+  if (includeId) parts.push(formatBaseId(base?.id_base))
+
+  return parts.join(' · ')
+}
+
+export function findDuplicateBaseGroups(bases, options = {}) {
+  const { byTipo = false } = options
+  const groups = new Map()
+
+  for (const base of bases || []) {
+    const nomeKey = normalizeBaseName(base?.Base)
+    const tipoKey = String(base?.Tipo || '').trim()
+    if (!nomeKey) continue
+
+    const key = byTipo ? `${tipoKey}::${nomeKey}` : nomeKey
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(base)
+  }
+
+  return Array.from(groups.entries())
+    .filter(([, items]) => items.length > 1)
+    .map(([key, items]) => ({
+      key,
+      nome: String(items[0]?.Base || '').trim(),
+      tipo: String(items[0]?.Tipo || '').trim(),
+      total: items.length,
+      bases: items,
+    }))
+    .sort((a, b) => {
+      if (a.tipo !== b.tipo) return a.tipo.localeCompare(b.tipo)
+      return a.nome.localeCompare(b.nome)
+    })
+}

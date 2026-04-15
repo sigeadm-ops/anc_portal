@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useTable } from '../hooks/useTable'
-import { fmtDate } from '../utils/helpers'
+import { fmtDate, buildBaseLabel, formatBaseId } from '../utils/helpers'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { db } from '../api/db'
 import toast from 'react-hot-toast'
@@ -16,11 +16,24 @@ export default function Relatorios() {
   const { data: notasSoul } = useTable('Notas_Soul')
 
   // Filtros Gerais
-  const [filtros, setFiltros] = useState({ Tipo: '', Regiao: '', Distritos: '', Igrejas: '', Base: '' })
+  const [filtros, setFiltros] = useState({ Tipo: '', Regiao: '', Distritos: '', Igrejas: '', id_base: '' })
   const [resultadoGeral, setResultadoGeral] = useState(null)
   
   // Filtros de Notas
   const [buscaNota, setBuscaNota] = useState('')
+
+  useEffect(() => {
+    const main = document.getElementById('main')
+    if (!main) return
+
+    if (tab === 'soul') {
+      main.classList.add('theme-soul')
+    } else {
+      main.classList.remove('theme-soul')
+    }
+
+    return () => main.classList.remove('theme-soul')
+  }, [tab])
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }))
 
@@ -74,13 +87,13 @@ export default function Relatorios() {
       if (bMembros.length === 0) {
         return [{
           Regiao: b.Regiao, Distrito: b.Distritos, Igreja: b.Igrejas, 
-          Base: b.Base, Tipo: b.Tipo, Coordenador: b.Coord, Status_Base: b.Status,
+          Base: b.Base, Base_ID: formatBaseId(b.id_base), Tipo: b.Tipo, Coordenador: b.Coord, Status_Base: b.Status,
           Membro: '', Nascimento: '', Responsavel: '', Status_Membro: ''
         }]
       }
       return bMembros.map(m => ({
         Regiao: b.Regiao, Distrito: b.Distritos, Igreja: b.Igrejas, 
-        Base: b.Base, Tipo: b.Tipo, Coordenador: b.Coord, Status_Base: b.Status,
+        Base: b.Base, Base_ID: formatBaseId(b.id_base), Tipo: b.Tipo, Coordenador: b.Coord, Status_Base: b.Status,
         Membro: m.Membros, Nascimento: fmtDate(m.Nasc), Responsavel: m.Responsavel, Status_Membro: m.Status
       }))
     })
@@ -111,14 +124,14 @@ export default function Relatorios() {
   const igrejas = [...new Set(
     bases.filter(b => (!filtros.Regiao || b.Regiao === filtros.Regiao) && (!filtros.Distritos || b.Distritos === filtros.Distritos)).map(b => b.Igrejas).filter(Boolean)
   )].sort()
-  const basesOpts = [...new Set(
-    bases.filter(b =>
+  const basesOpts = bases
+    .filter(b =>
       (!filtros.Tipo || b.Tipo === filtros.Tipo) &&
       (!filtros.Regiao || b.Regiao === filtros.Regiao) &&
       (!filtros.Distritos || b.Distritos === filtros.Distritos) &&
       (!filtros.Igrejas || b.Igrejas === filtros.Igrejas)
-    ).map(b => b.Base).filter(Boolean)
-  )].sort()
+    )
+    .sort((a, b) => buildBaseLabel(a, { includeTipo: true }).localeCompare(buildBaseLabel(b, { includeTipo: true })))
 
   function gerarGeral() {
     let basesFilt = bases.filter(b =>
@@ -126,7 +139,7 @@ export default function Relatorios() {
       (!filtros.Regiao || b.Regiao === filtros.Regiao) &&
       (!filtros.Distritos || b.Distritos === filtros.Distritos) &&
       (!filtros.Igrejas || b.Igrejas === filtros.Igrejas) &&
-      (!filtros.Base || b.Base === filtros.Base)
+      (!filtros.id_base || b.id_base === filtros.id_base)
     )
     const baseIds = new Set(basesFilt.map(b => b.id_base))
     const membrosFilt = membros.filter(m => baseIds.has(m.id_base))
@@ -148,15 +161,15 @@ export default function Relatorios() {
     if (!raw) return []
     return raw.filter(n => 
       !buscaNota || 
-      [n.Membros, n.Base, n.titulo].join(' ').toLowerCase().includes(buscaNota.toLowerCase())
+      [n.Membros || n.nome_aluno, n.Base || n.base, n.titulo || n.Titulo].join(' ').toLowerCase().includes(buscaNota.toLowerCase())
     )
   }, [tab, notasTeen, notasSoul, buscaNota])
 
   const notasAgrupadas = useMemo(() => {
     const groups = {}
     notasFiltradas.forEach(n => {
-      const bKey = n.Base || 'Sem Base'
-      const pKey = n.titulo || 'Sem Título'
+      const bKey = n.Base || n.base || 'Sem Base'
+      const pKey = n.titulo || n.Titulo || 'Sem Título'
       if (!groups[bKey]) groups[bKey] = {}
       if (!groups[bKey][pKey]) groups[bKey][pKey] = []
       groups[bKey][pKey].push(n)
@@ -246,10 +259,10 @@ export default function Relatorios() {
             <div className="card-body">
               <div className="form-grid">
                 <div className="form-group"><label>Tipo</label><select value={filtros.Tipo} onChange={e => setF('Tipo', e.target.value)}><option value="">Todos</option><option value="G148 Teen">G148 Teen</option><option value="Soul+">Soul+</option></select></div>
-                <div className="form-group"><label>Região</label><select value={filtros.Regiao} onChange={e => { setF('Regiao', e.target.value); setF('Distritos', ''); setF('Igrejas', ''); setF('Base', '') }}><option value="">Todas</option>{regioes.map(r => <option key={r}>{r}</option>)}</select></div>
-                <div className="form-group"><label>Distrito</label><select value={filtros.Distritos} onChange={e => { setF('Distritos', e.target.value); setF('Igrejas', ''); setF('Base', '') }}><option value="">Todos</option>{distritos.map(d => <option key={d}>{d}</option>)}</select></div>
-                <div className="form-group"><label>Igreja</label><select value={filtros.Igrejas} onChange={e => { setF('Igrejas', e.target.value); setF('Base', '') }}><option value="">Todas</option>{igrejas.map(i => <option key={i}>{i}</option>)}</select></div>
-                <div className="form-group"><label>Base</label><select value={filtros.Base} onChange={e => setF('Base', e.target.value)}><option value="">Todas</option>{basesOpts.map(b => <option key={b}>{b}</option>)}</select></div>
+                <div className="form-group"><label>Região</label><select value={filtros.Regiao} onChange={e => { setF('Regiao', e.target.value); setF('Distritos', ''); setF('Igrejas', ''); setF('id_base', '') }}><option value="">Todas</option>{regioes.map(r => <option key={r}>{r}</option>)}</select></div>
+                <div className="form-group"><label>Distrito</label><select value={filtros.Distritos} onChange={e => { setF('Distritos', e.target.value); setF('Igrejas', ''); setF('id_base', '') }}><option value="">Todos</option>{distritos.map(d => <option key={d}>{d}</option>)}</select></div>
+                <div className="form-group"><label>Igreja</label><select value={filtros.Igrejas} onChange={e => { setF('Igrejas', e.target.value); setF('id_base', '') }}><option value="">Todas</option>{igrejas.map(i => <option key={i}>{i}</option>)}</select></div>
+                <div className="form-group"><label>Base</label><select value={filtros.id_base} onChange={e => setF('id_base', e.target.value)}><option value="">Todas</option>{basesOpts.map(b => <option key={b.id_base} value={b.id_base}>{buildBaseLabel(b, { includeTipo: true })}</option>)}</select></div>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14, gap: 10 }}>
                 {resultadoGeral && (
@@ -282,11 +295,11 @@ export default function Relatorios() {
                           <div key={ig} style={{ marginLeft: 12, marginBottom: 15 }}>
                             <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.6 }}>🏛️ {ig}</div>
                             {bList.map(base => (
-                              <div key={base.id_base} style={{ padding: '8px 0' }}>
-                                <strong>⛪ {base.Base}</strong>
-                                <ul style={{ fontSize: 12, marginLeft: 20, marginTop: 4, color: 'var(--muted)' }}>
-                                  {resultadoGeral.membros.filter(m => m.id_base === base.id_base).map(m => (
-                                    <li key={m.id_membros}>{m.Membros}</li>
+                              <div key={base.id_base} className="base-print-block" style={{ padding: '8px 0' }}>
+                                <strong>⛪ {buildBaseLabel(base, { includeTipo: true })}</strong>
+                                <ul className="membros-list-print" style={{ fontSize: 12, marginLeft: 20, marginTop: 4 }}>
+                                  {resultadoGeral.membros.filter(m => m.id_base === base.id_base).sort((a, b) => a.Membros.localeCompare(b.Membros, 'pt-BR')).map(m => (
+                                    <li key={m.id_membros} style={{ color: 'inherit' }}>{m.Membros}</li>
                                   ))}
                                 </ul>
                               </div>
@@ -327,11 +340,17 @@ export default function Relatorios() {
                 <div className="card-title">⛪ {base}</div>
               </div>
               <div className="card-body">
-                {Object.entries(provas).sort(([a],[b]) => b.localeCompare(a)).map(([prova, lista]) => (
+                {Object.entries(provas).sort(([pA, listA], [pB, listB]) => {
+                  const isPA = (pA || '').toUpperCase().includes('PROVA')
+                  const isPB = (pB || '').toUpperCase().includes('PROVA')
+                  if (isPA && !isPB) return 1
+                  if (!isPA && isPB) return -1
+                  return ((listA[0]?.data || listA[0]?.Data) || '').localeCompare((listB[0]?.data || listB[0]?.Data) || '')
+                }).map(([prova, lista]) => (
                   <div key={prova} style={{ marginBottom: 24 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
                       <span style={{ fontWeight: 800, color: 'var(--c2)' }}>📝 {prova}</span>
-                      <span style={{ fontSize: 11, opacity: 0.6 }}>{fmtDate(lista[0]?.data)}</span>
+                      <span style={{ fontSize: 11, opacity: 0.6 }}>{fmtDate(lista[0]?.data || lista[0]?.Data)}</span>
                     </div>
                     <div className="table-wrap">
                       <table>

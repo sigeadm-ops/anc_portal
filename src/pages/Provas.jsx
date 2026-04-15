@@ -6,6 +6,7 @@ import { today, toInputDate, chipClass } from '../utils/helpers'
 const EMPTY = { tipo: '', nome: '', data: today() }
 
 export default function Provas() {
+  const { isAdmin, isAuditMode } = useAuthStore()
   const { data, isLoading, insert, update, remove } = useTable('provas', 'TabProvas')
   const [form, setForm] = useState(EMPTY)
   const [editingId, setEditingId] = useState(null)
@@ -45,7 +46,12 @@ export default function Provas() {
   }
 
   const sorted = [...data].sort((a, b) => {
-    if (a.tipo !== b.tipo) return a.tipo.localeCompare(b.tipo)
+    const nameA = (a.nome || '').toUpperCase()
+    const nameB = (b.nome || '').toUpperCase()
+    const isProvaA = nameA.includes('PROVA')
+    const isProvaB = nameB.includes('PROVA')
+    if (isProvaA && !isProvaB) return 1
+    if (!isProvaA && isProvaB) return -1
     return (a.data || '').localeCompare(b.data || '')
   })
 
@@ -77,7 +83,7 @@ export default function Provas() {
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
             <button type="button" className="btn btn-outline" onClick={cancelEdit}>Limpar</button>
-            <button type="submit" className="btn btn-primary" disabled={insert.isPending || update.isPending}>
+            <button type="submit" className="btn btn-primary" disabled={insert.isPending || update.isPending || !isAuditMode}>
               {(insert.isPending || update.isPending) ? <span className="spinner" /> : (editingId ? 'Atualizar' : 'Salvar')}
             </button>
           </div>
@@ -106,8 +112,8 @@ export default function Provas() {
                     <td>{p.data}</td>
                     <td>
                       <div className="td-actions">
-                        <button className="btn-icon" onClick={() => startEdit(p)}>✏️</button>
-                        <button className="btn-icon danger" onClick={() => handleDelete(p.id, p.nome)}>🗑️</button>
+                        <button className="btn-icon" onClick={() => startEdit(p)} disabled={!isAuditMode}>✏️</button>
+                        <button className="btn-icon danger" onClick={() => handleDelete(p.id, p.nome)} disabled={!isAuditMode}>🗑️</button>
                       </div>
                     </td>
                   </tr>

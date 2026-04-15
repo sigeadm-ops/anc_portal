@@ -13,6 +13,7 @@ export const useAuthStore = create(
   persist(
     (set, get) => ({
       isAdmin: false,
+      isAuditMode: false,
       _hashReady: false,
 
       // Inicializa o hash padrão se não existir
@@ -35,7 +36,21 @@ export const useAuthStore = create(
       },
 
       logout() {
-        set({ isAdmin: false })
+        set({ isAdmin: false, isAuditMode: false })
+      },
+
+      async toggleAuditMode(password) {
+        // Senha mestre para auditoria (pode ser diferente da admin)
+        // Por padrão, vamos usar a mesma, mas preparada para ser MASTER_PWD
+        const hash = await sha256(password)
+        const stored = localStorage.getItem(HASH_KEY) // Aqui poderíamos usar um MASTER_HASH_KEY
+        
+        // Para o usuário, a "master password" solicitada
+        if (password === 'master2026' || hash === stored) {
+          set(s => ({ isAuditMode: !s.isAuditMode }))
+          return true
+        }
+        return false
       },
 
       async changePassword(currentPwd, newPwd) {

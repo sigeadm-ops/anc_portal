@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { useIgrejas } from '../hooks/useIgrejas'
-import { today, fmtDate, formatCPF } from '../utils/helpers'
+import { today, fmtDate, formatCPF, buildBaseLabel, findDuplicateBaseGroups, formatBaseId } from '../utils/helpers'
 
 const EMPTY_HEADER = {
   // UI — controle de cascata e tema
@@ -50,12 +50,19 @@ export default function Membros() {
   // Cascata por IDs
   const distritosOpts = geo.getDistritos(header.id_regiao)
   const igrejasOpts = geo.getIgrejas(header.id_distritos)
+  const duplicateBaseGroups = useMemo(() => findDuplicateBaseGroups(bases, { byTipo: true }), [bases])
+
+  const baseById = useMemo(() => {
+    return new Map((bases || []).map((base) => [String(base.id_base), base]))
+  }, [bases])
 
   // Bases filtradas pelo Tipo e pela igreja selecionada
-  const basesFiltradas = bases.filter(b =>
-    (!header.Tipo || b.Tipo === header.Tipo) &&
-    (!header.id_igrejas || b.id_igrejas === header.id_igrejas)
-  )
+  const basesFiltradas = bases
+    .filter(b =>
+      (!header.Tipo || b.Tipo === header.Tipo) &&
+      (!header.id_igrejas || b.id_igrejas === header.id_igrejas)
+    )
+    .sort((a, b) => (a.Base || '').localeCompare(b.Base || ''))
 
   function addRows(n = 1) {
     setStaging(s => [...s, ...Array.from({ length: n }, newRow)])
@@ -110,20 +117,28 @@ export default function Membros() {
 
   async function handleUpdate() {
     if (!editingMembro) return
-    const { id_membros, Membros, Nasc, Fone, Email, Endereco, Responsavel, CPF, RG, Camiseta, Status } = editingMembro
-    await update.mutateAsync({ id: id_membros, data: { Membros, Nasc, Fone, Email, Endereco, Responsavel, CPF, RG, Camiseta, Status } })
+    const { id_membros, id_base, Membros, Nasc, Fone, Email, Endereco, Responsavel, CPF, RG, Camiseta, Status } = editingMembro
+    await update.mutateAsync({ id: id_membros, data: { id_base, Membros, Nasc, Fone, Email, Endereco, Responsavel, CPF, RG, Camiseta, Status } })
     toast.success('Membro atualizado!')
     setEditingMembro(null)
   }
 
+  const basesEdicao = useMemo(() => {
+    const tipoAtual = String(editingMembro?.Tipo || '').trim()
+    const rows = (bases || []).filter((base) => !tipoAtual || base.Tipo === tipoAtual)
+    return rows.sort((a, b) => buildBaseLabel(a).localeCompare(buildBaseLabel(b)))
+  }, [bases, editingMembro])
+
   // data vem de vw_membros: nome_base, nome_igreja são texto derivado
-  const filtered = data.filter(m =>
-    !search ||
-    [m.Membros, m.Igrejas, m.Base, m.CPF, m.Responsavel, m.Fone]
-      .join(' ')
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  )
+  const filtered = data
+    .filter(m =>
+      !search ||
+      [m.Membros, m.Igrejas, m.Base, m.CPF, m.Responsavel, m.Fone]
+        .join(' ')
+        .toLowerCase()
+        .includes(search.toLowerCase())
+    )
+    .sort((a, b) => (a.Membros || '').localeCompare(b.Membros || ''))
 
   return (
     <div>
@@ -134,6 +149,12 @@ export default function Membros() {
         </div>
 
         <div style={{ padding: '20px 20px 0' }}>
+          {duplicateBaseGroups.length > 0 && (
+            <div className="status-bar warn" style={{ marginBottom: 14 }}>
+              ⚠️ Existem {duplicateBaseGroups.length} nome{duplicateBaseGroups.length > 1 ? 's' : ''} de base repetido{duplicateBaseGroups.length > 1 ? 's' : ''} no mesmo tipo. Para evitar mistura, selecione sempre pela opção com igreja + id da base.
+            </div>
+          )}
+
           <div className="form-grid" style={{ marginBottom: 16 }}>
             <div className="form-group">
               <label>Tipo *</label>
@@ -168,7 +189,7 @@ export default function Membros() {
               <label>Base *</label>
               <select value={header.id_base} onChange={e => setH('id_base', e.target.value)}>
                 <option value="">Selecione…</option>
-                {basesFiltradas.map(b => <option key={b.id_base} value={b.id_base}>{b.Base}</option>)}
+                {basesFiltradas.map(b => <option key={b.id_base} value={b.id_base}>{buildBaseLabel(b, { includeTipo: true })}</option>)}
               </select>
             </div>
             <div className="form-group">
@@ -280,8 +301,16 @@ export default function Membros() {
                 {filtered.map(m => (
                   <tr key={m.id_membros}>
                     <td><strong>{m.Membros}</strong></td>
-                    <td>{m.Base || '—'}</td>
-                    <td><span className="chip chip-muted">{m.Igrejas || '—'}</span></td>
+                    <td>
+                      {baseById.has(String(m.id_base))
+                        ? buildBaseLabel(baseById.get(String(m.id_base)), { includeId: true })
+                        : `${m.Base || '—'} · ${formatBaseId(m.id_base)}`}
+                    </td>
+                    <td>
+                      <span className="chip chip-muted">
+                        {m.Igrejas || baseById.get(String(m.id_base))?.Igreja_Nome || '—'}
+                      </span>
+                    </td>
                     <td>{fmtDate(m.Nasc)}</td>
                     <td>{m.CPF || '—'}</td>
                     <td>{m.Fone || '—'}</td>
@@ -331,6 +360,17 @@ export default function Membros() {
                   <select value={editingMembro.Camiseta || ''} onChange={e => setEditingMembro(m => ({ ...m, Camiseta: e.target.value }))}>
                     <option value="">—</option>
                     {['P', 'M', 'G', 'GG', 'XG'].map(s => <option key={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Base (igreja + id)</label>
+                  <select value={editingMembro.id_base || ''} onChange={e => setEditingMembro(m => ({ ...m, id_base: e.target.value }))}>
+                    <option value="">Selecione…</option>
+                    {basesEdicao.map(base => (
+                      <option key={base.id_base} value={base.id_base}>
+                        {buildBaseLabel(base, { includeTipo: true })}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="form-group">

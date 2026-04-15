@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
-import { toInputDate } from '../utils/helpers'
+import { toInputDate, buildBaseLabel } from '../utils/helpers'
 
 // ── Linha vazia padrão ───────────────────────────────────────────
 function newRow() {
@@ -13,6 +13,7 @@ function newRow() {
     Membros:     '', // Nome para exibição/mirror
     Nota:        '',
     Comunhao:    '',
+    Verso:       '',
     Observacoes: '',
   }
 }
@@ -35,11 +36,36 @@ export function NotasForm({ tipo, sheetName }) {
   const { data: todosMembros } = useTable('Membros')
   const qc = useQueryClient()
 
+  // Ativa tema Soul+ na página inteira quando tipo === 'soul'
+  useEffect(() => {
+    const main = document.getElementById('main')
+    if (!main) return
+    if (tipo === 'soul') {
+      main.classList.add('theme-soul')
+    } else {
+      main.classList.remove('theme-soul')
+    }
+    return () => main.classList.remove('theme-soul')
+  }, [tipo])
+
   const tipoBase  = tipo === 'soul' ? 'Soul+' : 'G148 Teen'
   const tableName = tipo === 'soul' ? 'Notas_Soul' : 'Notas_Teen'
   
-  const basesOpts = bases.filter(b => b.Tipo === tipoBase)
-  const provasOpts = provas.filter(p => p.tipo === tipoBase)
+  const basesOpts = bases
+    .filter(b => b.Tipo === tipoBase)
+    .sort((a, b) => buildBaseLabel(a, { includeTipo: true }).localeCompare(buildBaseLabel(b, { includeTipo: true })))
+
+  const provasOpts = provas
+    .filter(p => p.tipo === tipoBase)
+    .sort((a, b) => {
+      const nameA = (a.nome || '').toUpperCase()
+      const nameB = (b.nome || '').toUpperCase()
+      const isProvaA = nameA.includes('PROVA')
+      const isProvaB = nameB.includes('PROVA')
+      if (isProvaA && !isProvaB) return 1
+      if (!isProvaA && isProvaB) return -1
+      return (a.data || '').localeCompare(b.data || '')
+    })
 
   const [meta, setMeta] = useState({
     id_provas:   '',
@@ -68,7 +94,7 @@ export function NotasForm({ tipo, sheetName }) {
   function handleProvaChange(e) {
     const id = e.target.value
     const prova = provasOpts.find(p => p.id_provas === id)
-    setMeta(m => ({ ...m, id_provas: id, data: prova ? toInputDate(prova.Data) : '' }))
+    setMeta(m => ({ ...m, id_provas: id, data: prova ? toInputDate(prova.data || prova.Data) : '' }))
   }
 
   function handleBaseChange(e) {
@@ -98,6 +124,7 @@ export function NotasForm({ tipo, sheetName }) {
         Membros:     m.Membros,
         Nota:        '',
         Comunhao:    '',
+        Verso:       '',
         Observacoes: '',
       })))
     } else {
@@ -147,15 +174,16 @@ export function NotasForm({ tipo, sheetName }) {
   const save = useMutation({
     mutationFn: async () => {
       const prova    = provasOpts.find(p => p.id_provas === meta.id_provas)
-      const id_form  = crypto.randomUUID()
-      const salvoEm  = new Date().toISOString()
+      const id_lote  = crypto.randomUUID()
 
       const dbRows = validRows.map(r => ({
-        id_form,
+        // Cada aluno precisa de chave própria para evitar colisão de PK.
+        id_form:      crypto.randomUUID(),
+        id_lote,
         id_provas:    meta.id_provas,
         aba:         tipo === 'soul' ? 'NOTAS_SOUL' : 'NOTAS',
         data:        meta.data,
-        titulo:      prova?.Provas || '',
+        titulo:      prova?.nome || '',
         responsavel: meta.responsavel,
         id_regiao:   meta.id_regiao,
         Regiao:      meta.Regiao,
@@ -169,9 +197,8 @@ export function NotasForm({ tipo, sheetName }) {
         Membros:      r.Membros,
         Nota:         Number(r.Nota),
         Comunhao:     r.Comunhao || null,
+        Verso:        r.Verso || null,
         Observacoes:  r.Observacoes.trim() || null,
-        Versao:       'v2',
-        SalvoEm:      salvoEm,
       }))
 
       return db.insertNotasForm(dbRows, sheetName, tableName)
@@ -210,12 +237,12 @@ export function NotasForm({ tipo, sheetName }) {
       <div className="form-grid" style={{ marginBottom: 16 }}>
         <div className="form-group">
           <label>Prova *</label>
-          <select value={meta.id_provas} onChange={handleProvaChange}>
-            <option value="">Selecione a prova…</option>
-            {provasOpts.map(p => (
-              <option key={p.id_provas} value={p.id_provas}>{p.Provas}</option>
-            ))}
-          </select>
+            <select value={meta.id_provas} onChange={handleProvaChange}>
+              <option value="">Selecione a prova…</option>
+              {provasOpts.map(p => (
+                <option key={p.id_provas} value={p.id_provas}>{p.nome}</option>
+              ))}
+            </select>
         </div>
 
         <div className="form-group">
@@ -224,6 +251,7 @@ export function NotasForm({ tipo, sheetName }) {
             type="date"
             value={meta.data}
             onChange={e => setM('data', e.target.value)}
+            readOnly
           />
         </div>
 
@@ -241,7 +269,7 @@ export function NotasForm({ tipo, sheetName }) {
           <select value={meta.id_base} onChange={handleBaseChange}>
             <option value="">Selecione a base…</option>
             {basesOpts.map(b => (
-              <option key={b.id_base} value={b.id_base}>{b.Base}</option>
+              <option key={b.id_base} value={b.id_base}>{buildBaseLabel(b, { includeTipo: true })}</option>
             ))}
           </select>
         </div>
@@ -283,9 +311,10 @@ export function NotasForm({ tipo, sheetName }) {
             <tr>
               <th style={{ width: 32 }}>#</th>
               <th style={{ minWidth: 190 }}>Aluno *</th>
-              <th style={{ width: 80, textAlign: 'center' }}>Nota *<br /><span style={{ fontWeight: 400, fontSize: 10 }}>0 – 99</span></th>
+              <th style={{ width: 110, textAlign: 'center' }}>Nota *<br /><span style={{ fontWeight: 400, fontSize: 10 }}>0 – 99</span></th>
               <th style={{ width: 110, textAlign: 'center' }}>Comunhão</th>
-              <th style={{ minWidth: 200 }}>Observação</th>
+              <th style={{ width: 110, textAlign: 'center' }}>VERSO</th>
+              <th style={{ minWidth: 160 }}>Observação</th>
               <th style={{ width: 36 }}></th>
             </tr>
           </thead>
@@ -337,6 +366,10 @@ export function NotasForm({ tipo, sheetName }) {
 
                 <td>
                   <SimNao value={row.Comunhao} onChange={e => updateRow(row._rid, 'Comunhao', e.target.value)} />
+                </td>
+
+                <td>
+                  <SimNao value={row.Verso} onChange={e => updateRow(row._rid, 'Verso', e.target.value)} />
                 </td>
 
                 <td>

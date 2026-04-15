@@ -37,9 +37,6 @@ export default function App() {
         <Route path="relatorios" element={<Relatorios />} />
 
         {/* Rotas ADMIN — requerem autenticação */}
-        <Route path="admin/provas" element={
-          <AdminRoute><Provas /></AdminRoute>
-        } />
         <Route path="admin/config" element={
           <AdminRoute><AdminConfig /></AdminRoute>
         } />

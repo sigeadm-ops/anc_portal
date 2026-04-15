@@ -14,8 +14,7 @@ const NAV_PUBLIC = [
 ]
 
 const NAV_ADMIN = [
-  { to: '/admin/provas', icon: '📝', label: 'Gerenciar Provas' },
-  { to: '/admin/config', icon: '⚙️', label: 'Configurações' },
+  { to: '/admin/config', icon: '⚙️', label: 'Painel Admin' },
 ]
 
 // Páginas que ativam o tema Soul+
@@ -37,7 +36,7 @@ const PAGE_TITLES = {
 
 export default function AppLayout() {
   const [connOk, setConnOk] = useState(null)
-  const { isAdmin, logout } = useAuthStore()
+  const { isAdmin, isAuditMode, toggleAuditMode, logout } = useAuthStore()
   const location = useLocation()
 
   // Estado da sidebar (recolhida ou não) -- persiste no localStorage
@@ -69,6 +68,17 @@ export default function AppLayout() {
       .then(({ error }) => setConnOk(!error))
       .catch(() => setConnOk(false))
   }, [])
+
+  async function handleToggleAudit() {
+    if (isAuditMode) {
+      toggleAuditMode('') // Desativa sem senha
+      return
+    }
+    const pwd = prompt('Digite a Master Password para liberar edição:')
+    if (!pwd) return
+    const ok = await toggleAuditMode(pwd)
+    if (!ok) alert('Senha incorreta!')
+  }
 
   // Tema Soul+: ativo na rota /notas-soul
   // Páginas de Bases e Membros ativam via seletor de tipo — tratado dentro de cada page
@@ -113,9 +123,9 @@ export default function AppLayout() {
         </nav>
 
         {/* Nav admin */}
-        {isAdmin && (
+        {(isAdmin || isAuditMode) && (
           <nav className="nav-section">
-            <div className="nav-section-label">Admin</div>
+            <div className="nav-section-label">Administração</div>
             {NAV_ADMIN.map(item => (
               <NavLink
                 key={item.to}
@@ -137,16 +147,15 @@ export default function AppLayout() {
           </nav>
         )}
 
-        {/* Botão login admin (quando não logado) - OCULTO TEMPORARIAMENTE
-        {!isAdmin && (
-          <nav className="nav-section">
+        {/* Botão login admin (quando não logado) */}
+        {!isAdmin && !isAuditMode && (
+          <nav className="nav-section" style={{ marginTop: 'auto' }}>
             <NavLink to="/admin/login" className="nav-item">
               <span className="nav-icon">🔒</span>
               <span className="nav-label">Área Admin</span>
             </NavLink>
           </nav>
         )}
-        */}
 
         {/* Rodapé sidebar */}
         <div className="sidebar-footer">
@@ -182,7 +191,13 @@ export default function AppLayout() {
           </div>
 
           {/* Badge modo auditoria */}
-          <span className="topbar-badge badge-auditoria">🔍 Auditoria</span>
+          <button 
+            className={`topbar-badge badge-auditoria ${isAuditMode ? 'active' : ''}`}
+            onClick={handleToggleAudit}
+            style={{ cursor: 'pointer', border: 'none', outline: 'none' }}
+          >
+            {isAuditMode ? '🔓 Edição Ativa' : '🔍 Auditoria'}
+          </button>
 
           {isAdmin && (
             <span className="topbar-badge badge-admin">Admin</span>
