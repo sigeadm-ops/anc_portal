@@ -27,29 +27,31 @@ export function useIgrejas() {
     staleTime: 1000 * 60 * 30,
   })
 
-  const regioes = regiaoQuery.data ?? []
+  const regioes = useMemo(() => {
+    return (regiaoQuery.data ?? []).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''))
+  }, [regiaoQuery.data])
   const distritos = distritosQuery.data ?? []
   const igrejas = igrejasQuery.data ?? []
 
-  // Distritos filtrados por id_regiao
-  const getDistritos = useMemo(() => (id_regiao) => {
-    if (!id_regiao) return []
+  // Distritos filtrados por regiao_id
+  const getDistritos = useMemo(() => (regiao_id) => {
+    if (!regiao_id) return []
     return distritos
-      .filter(d => d.id_regiao === id_regiao)
-      .sort((a, b) => (a.Distritos || '').localeCompare(b.Distritos || ''))
+      .filter(d => (d.regiao_id ?? d.id_regiao) === regiao_id)
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''))
   }, [distritos])
 
-  // Igrejas filtradas por id_distritos
-  const getIgrejas = useMemo(() => (id_distritos) => {
-    if (!id_distritos) return []
+  // Igrejas filtradas por distrito_id
+  const getIgrejas = useMemo(() => (distrito_id) => {
+    if (!distrito_id) return []
     return igrejas
-      .filter(i => i.id_distritos === id_distritos)
-      .sort((a, b) => (a.Igrejas || '').localeCompare(b.Igrejas || ''))
+      .filter(i => (i.distrito_id ?? i.id_distritos) === distrito_id)
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''))
   }, [igrejas])
 
   // Codref de uma igreja pelo seu ID
-  function getCodRef(id_igrejas) {
-    return igrejas.find(i => i.id_igrejas === id_igrejas)?.codref || ''
+  function getCodRef(id) {
+    return igrejas.find(i => i.id === id)?.codref || ''
   }
 
   const isLoading = regiaoQuery.isLoading || distritosQuery.isLoading || igrejasQuery.isLoading
