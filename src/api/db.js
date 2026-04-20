@@ -8,8 +8,8 @@ import { SheetsAPI } from './sheetsApi'
 const VIEW_MAP = {
   Bases:      'vw_bases',
   Membros:    'vw_membros',
-  Notas_Teen: 'vw_notas',      // vw_notas unificada no v2
-  Notas_Soul: 'vw_notas',
+  Notas_Teen: 'vw_notas_teen',
+  Notas_Soul: 'vw_notas_soul',
   Provas:     'Provas',
   Regiao:     'Regiao',
   Distritos:  'Distritos',
