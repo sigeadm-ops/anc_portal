@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
+import { useAuthStore } from '../store/authStore'
 import { today, toInputDate, chipClass } from '../utils/helpers'
 
 const EMPTY = { tipo: '', nome: '', data: today() }

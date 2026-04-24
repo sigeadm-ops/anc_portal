@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { useIgrejas } from '../hooks/useIgrejas'
@@ -23,29 +24,26 @@ const newRow = () => ({
 })
 
 export default function Membros() {
+  const { type } = useParams()
+  const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
+
   const { data, isLoading, insert, update, remove } = useTable('Membros', 'MEMBROS')
   const { data: bases } = useTable('Bases')
   const geo = useIgrejas()
 
-  const [header, setHeader] = useState(EMPTY_HEADER)
+  const [header, setHeader] = useState({ ...EMPTY_HEADER, Tipo: currentTipo })
   const [staging, setStaging] = useState([newRow()])
   const [search, setSearch] = useState('')
   const [editingMembro, setEditingMembro] = useState(null)
   const [saving, setSaving] = useState(false)
 
+  // Atualiza o tipo no cabeçalho se o parâmetro da URL mudar
+  useEffect(() => {
+    setHeader(h => ({ ...h, Tipo: currentTipo }))
+  }, [currentTipo])
+
   const setH = (k, v) => setHeader(h => ({ ...h, [k]: v }))
 
-  // ── Tema Soul+ ────────────────────────────────────────────────
-  useEffect(() => {
-    const main = document.getElementById('main')
-    if (!main) return
-    if (header.Tipo === 'Soul+') {
-      main.classList.add('theme-soul')
-    } else {
-      main.classList.remove('theme-soul')
-    }
-    return () => main.classList.remove('theme-soul')
-  }, [header.Tipo])
 
   // Cascata por IDs
   const distritosOpts = geo.getDistritos(header.id_regiao)
@@ -57,9 +55,9 @@ export default function Membros() {
   }, [bases])
 
   // Bases filtradas pelo Tipo e pela igreja selecionada
-  const basesFiltradas = bases
+  const basesFiltradas = (bases || [])
     .filter(b =>
-      (!header.Tipo || b.Tipo === header.Tipo) &&
+      (b.Tipo === currentTipo) &&
       (!header.id_igrejas || b.id_igrejas === header.id_igrejas)
     )
     .sort((a, b) => (a.Base || '').localeCompare(b.Base || ''))
@@ -130,14 +128,23 @@ export default function Membros() {
   }, [bases, editingMembro])
 
   // data vem de vw_membros: nome_base, nome_igreja são texto derivado
-  const filtered = data
-    .filter(m =>
-      !search ||
+  const filtered = (data || [])
+    .filter(m => {
+      // Filtrar pelo tipo da base do membro (flexível)
+      const baseMembro = baseById.get(String(m.id_base))
+      if (baseMembro) {
+        const bTipo = (baseMembro.Tipo || '').toLowerCase()
+        const cTipo = currentTipo.toLowerCase()
+        const matches = cTipo.includes('teen') ? (bTipo.includes('teen') || !bTipo) : bTipo.includes('soul')
+        if (!matches) return false
+      }
+      
+      return !search ||
       [m.Membros, m.Igrejas, m.Base, m.CPF, m.Responsavel, m.Fone]
         .join(' ')
         .toLowerCase()
         .includes(search.toLowerCase())
-    )
+    })
     .sort((a, b) => (a.Membros || '').localeCompare(b.Membros || ''))
 
   return (
@@ -156,13 +163,9 @@ export default function Membros() {
           )}
 
           <div className="form-grid" style={{ marginBottom: 16 }}>
-            <div className="form-group">
-              <label>Tipo *</label>
-              <select value={header.Tipo} onChange={e => setH('Tipo', e.target.value)}>
-                <option value="">Selecione…</option>
-                <option value="G148 Teen">G148 Teen</option>
-                <option value="Soul+">Soul+</option>
-              </select>
+            <div className="form-group" style={{ opacity: 0.7 }}>
+              <label>Tipo</label>
+              <input value={currentTipo} readOnly disabled style={{ background: type === 'soul' ? 'rgba(62,32,0,0.05)' : 'rgba(255,255,255,0.05)', fontWeight: 800 }} />
             </div>
             <div className="form-group">
               <label>Região</label>
@@ -206,7 +209,7 @@ export default function Membros() {
           </div>
 
           <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: type === 'soul' ? 'var(--soul-brown)' : 'var(--muted)' }}>
               {staging.length} membro{staging.length !== 1 ? 's' : ''} na fila · {validRows.length} válido{validRows.length !== 1 ? 's' : ''}
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -216,18 +219,18 @@ export default function Membros() {
           </div>
         </div>
 
-        <div className="table-wrap staging-table" style={{ marginBottom: 0 }}>
-          <table>
+        <div className="table-wrap staging-table" style={{ marginBottom: 0, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <table style={{ minWidth: 900 }}>
             <thead>
               <tr>
                 <th style={{ width: 36 }}>#</th>
-                <th style={{ minWidth: 180 }}>Nome *</th>
-                <th style={{ minWidth: 130 }}>Nascimento</th>
-                <th style={{ minWidth: 140 }}>Telefone</th>
-                <th style={{ minWidth: 120 }}>CPF</th>
-                <th style={{ minWidth: 80 }}>Camiseta</th>
-                <th style={{ minWidth: 160 }}>Responsável</th>
-                <th></th>
+                <th style={{ minWidth: 200 }}>Nome *</th>
+                <th style={{ width: 140 }}>Nascimento</th>
+                <th style={{ width: 150 }}>Telefone</th>
+                <th style={{ width: 130 }}>CPF</th>
+                <th style={{ width: 90 }}>Camiseta</th>
+                <th style={{ width: 170 }}>Responsável</th>
+                <th style={{ width: 40 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -253,7 +256,7 @@ export default function Membros() {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 20px' }}>
-          <button className="btn btn-outline" onClick={() => { setStaging([newRow()]); setHeader(EMPTY_HEADER) }}>Limpar tudo</button>
+          <button className="btn btn-outline" onClick={() => { setStaging([newRow()]); setHeader({ ...EMPTY_HEADER, Tipo: currentTipo }) }}>Limpar tudo</button>
           <button className="btn btn-primary" onClick={handleSaveAll} disabled={saving || !headerOk || !validRows.length}>
             {saving
               ? <><span className="spinner" /> Salvando…</>
@@ -282,19 +285,19 @@ export default function Membros() {
             <p>{search ? 'Nenhum resultado.' : 'Nenhum membro cadastrado ainda.'}</p>
           </div>
         ) : (
-          <div className="table-wrap">
-            <table>
+          <div className="table-wrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <table style={{ minWidth: 1000 }}>
               <thead>
                 <tr>
-                  <th>Nome</th>
-                  <th>Base</th>
-                  <th>Igreja</th>
-                  <th>Nascimento</th>
-                  <th>CPF</th>
-                  <th>Fone</th>
-                  <th>Responsável</th>
-                  <th>Status</th>
-                  <th>Ações</th>
+                  <th style={{ minWidth: 160 }}>Nome</th>
+                  <th style={{ minWidth: 160 }}>Base</th>
+                  <th style={{ minWidth: 130 }}>Igreja</th>
+                  <th style={{ width: 120 }}>Nascimento</th>
+                  <th style={{ width: 130 }}>CPF</th>
+                  <th style={{ width: 130 }}>Fone</th>
+                  <th style={{ width: 140 }}>Responsável</th>
+                  <th style={{ width: 90 }}>Status</th>
+                  <th style={{ width: 80 }}>Ações</th>
                 </tr>
               </thead>
               <tbody>

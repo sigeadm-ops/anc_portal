@@ -157,6 +157,57 @@ function normalizeReadRow(table, row) {
     }
   }
 
+  if (table === 'Notas_Teen' || table === 'Notas_Soul') {
+    return {
+      ...row,
+      id: row.id,
+      id_form: row.id_form,
+      // Unifica variações de chave estrangeira de base
+      id_base:  row.id_base  ?? row.base_id,
+      base_id:  row.base_id  ?? row.id_base,
+      // Unifica variações de chave estrangeira de prova
+      id_provas: row.id_provas ?? row.prova_id,
+      prova_id:  row.prova_id  ?? row.id_provas,
+      // Membro
+      id_membros: row.id_membros,
+      Membros:    row.Membros    ?? row.nome_aluno,
+      nome_aluno: row.nome_aluno ?? row.Membros,
+      // Localização
+      Base:      row.Base      ?? row.base,
+      base:      row.base      ?? row.Base,
+      Regiao:    row.Regiao    ?? row.regiao,
+      Distritos: row.Distritos ?? row.Distrito ?? row.distrito,
+      Igrejas:   row.Igrejas   ?? row.Igreja   ?? row.igreja,
+      id_base_geo: row.id_base,
+      id_regiao:   row.id_regiao,
+      id_distritos: row.id_distritos,
+      id_igrejas:   row.id_igrejas,
+      // Data — normaliza para garantir que 'data' (lowercase) existe sempre
+      data:  row.data  ?? row.Data,
+      Data:  row.Data  ?? row.data,
+      // Prova info
+      titulo: row.titulo ?? row.Titulo,
+      Titulo: row.Titulo ?? row.titulo,
+      // Nota
+      Nota: row.Nota ?? row.nota,
+      nota: row.nota ?? row.Nota,
+      // Campos booleanos/texto
+      Comunhao:  row.Comunhao  ?? row.comunhao,
+      comunhao:  row.comunhao  ?? row.Comunhao,
+      Verso:     row.Verso     ?? row.verso,
+      verso:     row.verso     ?? row.Verso,
+      // discipulado: a coluna pode ser 'discipulado' (legacy) ou 'discipulo' (normalizado)
+      discipulado: row.discipulado ?? row.Discipulado ?? row.discipulo,
+      trezentos_treinamento: row.trezentos_treinamento ?? row.TrezentosTrainamento ?? null,
+      trezentos_estudo:      row.trezentos_estudo      ?? row.TrezentosEstudo      ?? null,
+      Observacoes: row.Observacoes ?? row.observacoes,
+      observacoes: row.observacoes ?? row.Observacoes,
+      responsavel: row.responsavel,
+      tipo: row.tipo ?? row.Tipo,
+      aba:  row.aba  ?? row.Aba,
+    }
+  }
+
   return row
 }
 
@@ -414,7 +465,7 @@ export const db = {
     let payload = rows
     // Em bases legadas, algumas colunas não existem (ex.: Versao/SalvoEm).
     // Faz retry removendo a coluna apontada no erro para não travar o lançamento.
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < 30; attempt++) {
       const { data, error } = await supabase
         .from(tableName)
         .insert(payload)
@@ -464,5 +515,623 @@ export const db = {
     }
     if (resp.error) throw resp.error
     return (resp.data ?? []).map((row) => normalizeReadRow('Igrejas', row))
+  },
+
+  // ── DESAFIOS ────────────────────────────────────────────────
+
+  async getDesafiosCatalogo(tipo) {
+    const { data, error } = await supabase
+      .from('desafios_catalogo')
+      .select('*')
+      .eq('ativo', true)
+      .order('ordem', { ascending: true })
+
+    if (error) throw error
+    if (!data) return []
+
+    // Se o tipo for informado, filtra no JS para evitar erro caso a coluna 'tipo' não exista no banco
+    if (tipo) {
+      const isTeen = tipo.toLowerCase().includes('teen')
+      return data.filter(d => {
+        const itemTipo = (d.tipo || 'G148 Teen').toLowerCase()
+        if (isTeen) return itemTipo.includes('teen')
+        return itemTipo.includes('soul')
+      })
+    }
+    return data
+  },
+
+  async getDesafiosCatalogoAll() {
+    const { data, error } = await supabase
+      .from('desafios_catalogo')
+      .select('*')
+      .order('ordem', { ascending: true })
+    if (error) throw error
+    return data ?? []
+  },
+
+  async upsertDesafioCatalogo({ id, codigo, nome, descricao, categoria, rastreamento, periodicidade, pontos_total, ordem, ativo, mes_ref, tipo }) {
+    const payload = {
+      codigo,
+      nome,
+      descricao: descricao || null,
+      categoria: categoria || null,
+      rastreamento,
+      periodicidade,
+      pontos_total: Number(pontos_total),
+      ordem: Number(ordem ?? 99),
+      ativo: ativo !== false,
+      mes_ref: mes_ref ? Number(mes_ref) : null,
+      tipo: tipo || 'G148 Teen',
+    }
+    if (id) {
+      const { data, error } = await supabase.from('desafios_catalogo').update(payload).eq('id', id).select().single()
+      if (error) throw error
+      return data
+    }
+    const { data, error } = await supabase.from('desafios_catalogo').insert(payload).select().single()
+    if (error) throw error
+    return data
+  },
+
+  async deleteDesafioCatalogo(id) {
+    const { error: e1 } = await supabase.from('desafios_registros').delete().eq('desafio_id', id)
+    if (e1) throw e1
+    const { error: e2 } = await supabase.from('desafios_marcos').delete().eq('desafio_id', id)
+    if (e2) throw e2
+    const { error } = await supabase.from('desafios_catalogo').delete().eq('id', id)
+    if (error) throw error
+    return true
+  },
+
+  async getConfiguracaoTrimestres(ano) {
+    const { data, error } = await supabase
+      .from('configuracao_trimestres')
+      .select('*')
+      .eq('ano', ano)
+      .order('trimestre', { ascending: true })
+    if (error) throw error
+    return data ?? []
+  },
+
+  async upsertConfiguracaoTrimestre({ ano, trimestre, primeiro_sabado, ultimo_sabado }) {
+    const { data, error } = await supabase
+      .from('configuracao_trimestres')
+      .upsert({ ano, trimestre, primeiro_sabado, ultimo_sabado }, { onConflict: 'ano,trimestre' })
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async deleteConfiguracaoTrimestre(id) {
+    const { error } = await supabase
+      .from('configuracao_trimestres')
+      .delete()
+      .eq('id', id)
+    if (error) throw error
+    return true
+  },
+
+  async getDesafiosRegistros(base_id, primeiro_sabado, ultimo_sabado) {
+    const { data, error } = await supabase
+      .from('desafios_registros')
+      .select('*')
+      .eq('base_id', base_id)
+      .gte('data_sabado', primeiro_sabado)
+      .lte('data_sabado', ultimo_sabado)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async getDesafiosRegistrosPorAno(base_id, ano) {
+    const { data, error } = await supabase
+      .from('desafios_registros')
+      .select('*')
+      .eq('base_id', base_id)
+      .gte('data_sabado', `${ano}-01-01`)
+      .lte('data_sabado', `${ano}-12-31`)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async upsertRegistro({ base_id, desafio_id, data_sabado, realizado, responsavel, obs }) {
+    const { data, error } = await supabase
+      .from('desafios_registros')
+      .upsert(
+        { base_id, desafio_id, data_sabado, realizado, responsavel: responsavel ?? null, obs: obs ?? null },
+        { onConflict: 'base_id,desafio_id,data_sabado' }
+      )
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async getDesafiosMarcos(base_id, ano) {
+    const { data, error } = await supabase
+      .from('desafios_marcos')
+      .select('*')
+      .eq('base_id', base_id)
+      .eq('ano', ano)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async upsertMarco({ base_id, desafio_id, ano, trimestre, mes, realizado, data_realizacao, responsavel, obs }) {
+    const payload = {
+      base_id,
+      desafio_id,
+      ano,
+      trimestre: trimestre ?? null,
+      mes: mes ?? null,
+      realizado,
+      data_realizacao: data_realizacao ?? null,
+      responsavel: responsavel ?? null,
+      obs: obs ?? null,
+    }
+
+    // Busca registro existente considerando NULL em trimestre e mes
+    let q = supabase
+      .from('desafios_marcos')
+      .select('id')
+      .eq('base_id', base_id)
+      .eq('desafio_id', desafio_id)
+      .eq('ano', ano)
+
+    q = trimestre != null ? q.eq('trimestre', trimestre) : q.is('trimestre', null)
+    q = mes != null ? q.eq('mes', mes) : q.is('mes', null)
+
+    const { data: existing } = await q.maybeSingle()
+
+    if (existing?.id) {
+      const { data, error } = await supabase
+        .from('desafios_marcos')
+        .update(payload)
+        .eq('id', existing.id)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    }
+
+    const { data, error } = await supabase
+      .from('desafios_marcos')
+      .insert(payload)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async getAllRegistrosPorAno(ano) {
+    const { data, error } = await supabase
+      .from('desafios_registros')
+      .select('*')
+      .gte('data_sabado', `${ano}-01-01`)
+      .lte('data_sabado', `${ano}-12-31`)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async getAllMarcosPorAno(ano) {
+    const { data, error } = await supabase
+      .from('desafios_marcos')
+      .select('*')
+      .eq('ano', ano)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async getAllNotasTeenPorAno(ano) {
+    const { data, error } = await supabase
+      .from('vw_notas_teen')
+      .select('id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, nota, Nota')
+      .gte('Data', `${ano}-01-01`)
+      .lte('Data', `${ano}-12-31`)
+    if (error) throw error
+    return (data ?? []).filter(r => {
+      const n = Number(r.nota ?? r.Nota)
+      return Number.isFinite(n)
+    })
+  },
+
+  async getAllNotasSoulPorAno(ano) {
+    const { data, error } = await supabase
+      .from('vw_notas_soul')
+      .select('id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, nota, Nota')
+      .gte('Data', `${ano}-01-01`)
+      .lte('Data', `${ano}-12-31`)
+    if (error) throw error
+    return (data ?? []).filter(r => {
+      const n = Number(r.nota ?? r.Nota)
+      return Number.isFinite(n)
+    })
+  },
+
+  async getNotasTeenPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado) {
+    const { data, error } = await supabase
+      .from('vw_notas_teen')
+      .select('id, id_membros, Membros, nome_aluno, Data, Nota, nota')
+      .eq('id_base', base_id)
+      .gte('Data', primeiro_sabado)
+      .lte('Data', ultimo_sabado)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async getNotasSoulPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado) {
+    const { data, error } = await supabase
+      .from('vw_notas_soul')
+      .select('id, id_membros, Membros, nome_aluno, Data, Nota, nota')
+      .eq('id_base', base_id)
+      .gte('Data', primeiro_sabado)
+      .lte('Data', ultimo_sabado)
+    if (error) throw error
+    return data ?? []
+  },
+
+  // ── DISCÍPULOS TEEN ─────────────────────────────────────────
+
+  async getDiscipulosRequisitoCatalogo() {
+    const { data, error } = await supabase
+      .from('discipulos_requisitos_catalogo')
+      .select('*')
+      .order('numero', { ascending: true })
+    if (error) throw error
+    return data ?? []
+  },
+
+  async upsertDiscipuloRequisitoCatalogo({ id, numero, descricao, pontos, ativo }) {
+    const payload = {
+      numero: Number(numero),
+      descricao,
+      pontos: Number(pontos ?? 0),
+      ativo: ativo !== false,
+    }
+    if (id) {
+      const { data, error } = await supabase
+        .from('discipulos_requisitos_catalogo')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    }
+    const { data, error } = await supabase
+      .from('discipulos_requisitos_catalogo')
+      .insert(payload)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async getDiscipuladoDepartamentos(onlyAtivos = false) {
+    let query = supabase
+      .from('discipulado_departamentos_catalogo')
+      .select('*')
+
+    if (onlyAtivos) query = query.eq('ativo', true)
+
+    const { data, error } = await query
+      .order('nome', { ascending: true })
+
+    if (error) throw error
+    return data ?? []
+  },
+
+  async getDiscipuladoDepartamentosAtivos() {
+    return this.getDiscipuladoDepartamentos(true)
+  },
+
+  async upsertDiscipuladoDepartamento({ id, nome, ativo, ordem }) {
+    const payload = {
+      nome: String(nome ?? '').trim(),
+      ativo: ativo !== false,
+      ordem: Number(ordem ?? 99),
+    }
+
+    if (!payload.nome) throw new Error('Nome do departamento é obrigatório.')
+
+    if (id) {
+      const { data, error } = await supabase
+        .from('discipulado_departamentos_catalogo')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    }
+
+    const { data, error } = await supabase
+      .from('discipulado_departamentos_catalogo')
+      .insert(payload)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async deleteDiscipuladoDepartamento(id) {
+    const { error } = await supabase
+      .from('discipulado_departamentos_catalogo')
+      .delete()
+      .eq('id', id)
+    if (error) throw error
+    return true
+  },
+
+  async getDiscipulosCartoes(base_id, ano, tipo = 'G148 Teen') {
+    let query = supabase
+      .from('discipulos_cartoes')
+      .select('*')
+      .eq('base_id', base_id)
+      .eq('ano', ano)
+
+    if (tipo) query = query.eq('tipo', tipo)
+
+    const { data, error } = await query
+      .order('ordem', { ascending: true })
+      .order('criado_em', { ascending: true })
+
+    if (error) throw error
+    return data ?? []
+  },
+
+  async createDiscipulosCartao({ membro_id, base_id, ano, tipo = 'G148 Teen', nome, departamento }) {
+    const { count, error: countError } = await supabase
+      .from('discipulos_cartoes')
+      .select('*', { count: 'exact', head: true })
+      .eq('membro_id', membro_id)
+      .eq('base_id', base_id)
+      .eq('ano', ano)
+      .eq('tipo', tipo)
+
+    if (countError) throw countError
+
+    const ordem = (count ?? 0) + 1
+    const payload = {
+      membro_id,
+      base_id,
+      ano,
+      tipo,
+      ordem,
+      nome: nome?.trim() || `Cartão ${ordem}`,
+      departamento: departamento?.trim() || null,
+    }
+
+    const { data, error } = await supabase
+      .from('discipulos_cartoes')
+      .insert(payload)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async updateDiscipulosCartao({ id, nome, departamento }) {
+    const payload = {
+      nome: nome?.trim() || 'Cartão',
+      departamento: departamento?.trim() || null,
+      atualizado_em: new Date().toISOString(),
+    }
+    const { data, error } = await supabase
+      .from('discipulos_cartoes')
+      .update(payload)
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async getDiscipulosRegistros(base_id, ano, tipo = null) {
+    if (!tipo) {
+      const { data, error } = await supabase
+        .from('discipulos_registros')
+        .select('*')
+        .eq('base_id', base_id)
+        .eq('ano', ano)
+      if (error) throw error
+      return data ?? []
+    }
+
+    const cartoes = await this.getDiscipulosCartoes(base_id, ano, tipo)
+    const ids = cartoes.map(c => c.id)
+    if (!ids.length) return []
+
+    const { data, error } = await supabase
+      .from('discipulos_registros')
+      .select('*')
+      .eq('base_id', base_id)
+      .eq('ano', ano)
+      .in('card_id', ids)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async getAllDiscipulosRegistrosPorAno(ano) {
+    const { data, error } = await supabase
+      .from('discipulos_registros')
+      .select('*')
+      .eq('ano', ano)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async upsertDiscipuloRegistro({ membro_id, base_id, card_id, requisito_id, ano, realizado, data_realizacao, responsavel }) {
+    if (!card_id) throw new Error('Cartão do discipulado não informado.')
+
+    const payload = {
+      membro_id,
+      base_id,
+      card_id,
+      requisito_id,
+      ano,
+      realizado: realizado ?? false,
+      data_realizacao: data_realizacao ?? null,
+      responsavel: responsavel ?? null,
+    }
+    const { data: existing } = await supabase
+      .from('discipulos_registros')
+      .select('id')
+      .eq('membro_id', membro_id)
+      .eq('card_id', card_id)
+      .eq('requisito_id', requisito_id)
+      .eq('ano', ano)
+      .maybeSingle()
+
+    if (existing?.id) {
+      const { data, error } = await supabase
+        .from('discipulos_registros')
+        .update(payload)
+        .eq('id', existing.id)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    }
+    const { data, error } = await supabase
+      .from('discipulos_registros')
+      .insert(payload)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  // ── BATISMOS ─────────────────────────────────────────────────
+
+  async getBatismosConfig() {
+    const { data, error } = await supabase
+      .from('batismos_config')
+      .select('*')
+      .eq('id', 1)
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async upsertBatismosConfig({ pontos_por_batismo }) {
+    const { data, error } = await supabase
+      .from('batismos_config')
+      .upsert({ id: 1, pontos_por_batismo: Number(pontos_por_batismo ?? 0) }, { onConflict: 'id' })
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async getBatismos(base_id, ano) {
+    const { data, error } = await supabase
+      .from('batismos_registros')
+      .select('*')
+      .eq('base_id', base_id)
+      .eq('ano', ano)
+      .order('mes', { ascending: true })
+    if (error) throw error
+    return data ?? []
+  },
+
+  async getAllBatismosPorAno(ano) {
+    const { data, error } = await supabase
+      .from('batismos_registros')
+      .select('*')
+      .eq('ano', ano)
+    if (error) throw error
+    return data ?? []
+  },
+
+  async upsertBatismo({ id, base_id, nome, mes, ano, foto_url, obs }) {
+    const payload = {
+      base_id,
+      nome,
+      mes: mes ? Number(mes) : null,
+      ano: Number(ano),
+      foto_url: foto_url ?? null,
+      obs: obs ?? null,
+    }
+    if (id) {
+      const { data, error } = await supabase
+        .from('batismos_registros')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    }
+    const { data, error } = await supabase
+      .from('batismos_registros')
+      .insert(payload)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async deleteBatismo(id) {
+    const { error } = await supabase.from('batismos_registros').delete().eq('id', id)
+    if (error) throw error
+    return true
+  },
+
+  // ── BIBLIOTECA DE IMAGENS ────────────────────────────────────
+
+  async getBibliotecaImagens(base_id) {
+    const { data, error } = await supabase
+      .from('biblioteca_imagens')
+      .select('*')
+      .eq('base_id', base_id)
+      .order('data_upload', { ascending: false })
+    if (error) throw error
+    return data ?? []
+  },
+
+  async upsertBibliotecaImagem({ id, base_id, titulo, url, data_upload, observacao }) {
+    const payload = {
+      base_id,
+      titulo,
+      url,
+      data_upload: data_upload ?? new Date().toISOString().split('T')[0],
+      observacao: observacao ?? null,
+    }
+    if (id) {
+      const { data, error } = await supabase
+        .from('biblioteca_imagens')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    }
+    const { data, error } = await supabase
+      .from('biblioteca_imagens')
+      .insert(payload)
+      .select()
+      .single()
+    if (error) throw error
+    return data
+  },
+
+  async deleteBibliotecaImagem(id) {
+    const { error } = await supabase.from('biblioteca_imagens').delete().eq('id', id)
+    if (error) throw error
+    return true
+  },
+
+  // ── STORAGE (upload de arquivos) ─────────────────────────────
+
+  async uploadArquivo(bucket, path, file) {
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .upload(path, file, { upsert: true })
+    if (error) throw error
+    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path)
+    return urlData.publicUrl
   },
 }

@@ -1,20 +1,25 @@
-import { useState, useEffect } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useMemo } from 'react'
+import { useParams } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
-import { toInputDate, buildBaseLabel } from '../utils/helpers'
+import { useAuthStore } from '../store/authStore'
+import { toInputDate, buildBaseLabel, fmtDate } from '../utils/helpers'
 
 // ── Linha vazia padrão ───────────────────────────────────────────
 function newRow() {
   return {
-    _rid:        crypto.randomUUID(),
-    id_membros:  '', // ID Único do Membro
-    Membros:     '', // Nome para exibição/mirror
-    Nota:        '',
-    Comunhao:    '',
-    Verso:       '',
-    Observacoes: '',
+    _rid:                 crypto.randomUUID(),
+    id_membros:           '',
+    Membros:              '',
+    Nota:                 '',
+    Comunhao:             '',
+    Verso:                '',
+    Discipulado:          '',
+    TrezentosTrainamento: '',
+    TrezentosEstudo:      '',
+    Observacoes:          '',
   }
 }
 
@@ -36,17 +41,6 @@ export function NotasForm({ tipo, sheetName }) {
   const { data: todosMembros } = useTable('Membros')
   const qc = useQueryClient()
 
-  // Ativa tema Soul+ na página inteira quando tipo === 'soul'
-  useEffect(() => {
-    const main = document.getElementById('main')
-    if (!main) return
-    if (tipo === 'soul') {
-      main.classList.add('theme-soul')
-    } else {
-      main.classList.remove('theme-soul')
-    }
-    return () => main.classList.remove('theme-soul')
-  }, [tipo])
 
   const tipoBase  = tipo === 'soul' ? 'Soul+' : 'G148 Teen'
   const tableName = tipo === 'soul' ? 'Notas_Soul' : 'Notas_Teen'
@@ -119,13 +113,16 @@ export function NotasForm({ tipo, sheetName }) {
 
     if (membrosDaBase.length > 0) {
       setRows(membrosDaBase.map(m => ({
-        _rid:        crypto.randomUUID(),
-        id_membros:  m.id_membros,
-        Membros:     m.Membros,
-        Nota:        '',
-        Comunhao:    '',
-        Verso:       '',
-        Observacoes: '',
+        _rid:                 crypto.randomUUID(),
+        id_membros:           m.id_membros,
+        Membros:              m.Membros,
+        Nota:                 '',
+        Comunhao:             '',
+        Verso:                '',
+        Discipulado:          '',
+        TrezentosTrainamento: '',
+        TrezentosEstudo:      '',
+        Observacoes:          '',
       })))
     } else {
       setRows([newRow()])
@@ -163,7 +160,7 @@ export function NotasForm({ tipo, sheetName }) {
       r.Membros.trim().length > 0 &&
       r.Nota !== '' &&
       Number.isFinite(n) &&
-      n >= 0 && n <= 99
+      n >= 1 && n <= 10
     )
   }
 
@@ -196,17 +193,20 @@ export function NotasForm({ tipo, sheetName }) {
         id_igrejas:   meta.id_igrejas,
         Igrejas:      meta.Igrejas,
         Base:         meta.Base,
-        id_membros:   r.id_membros || null,
-        nome_aluno:   r.Membros,
-        Membros:      r.Membros,
-        nota:         Number(r.Nota),
-        Nota:         Number(r.Nota),
-        comunhao:     r.Comunhao || null,
-        Comunhao:     r.Comunhao || null,
-        verso:        r.Verso || null,
-        Verso:        r.Verso || null,
-        observacoes:  r.Observacoes.trim() || null,
-        Observacoes:  r.Observacoes.trim() || null,
+        id_membros:            r.id_membros || null,
+        nome_aluno:            r.Membros,
+        Membros:               r.Membros,
+        nota:                  Number(r.Nota),
+        Nota:                  Number(r.Nota),
+        comunhao:              r.Comunhao || null,
+        Comunhao:              r.Comunhao || null,
+        verso:                 r.Verso || null,
+        Verso:                 r.Verso || null,
+        discipulado:           r.Discipulado || null,
+        trezentos_treinamento: r.TrezentosTrainamento || null,
+        trezentos_estudo:      r.TrezentosEstudo || null,
+        observacoes:           r.Observacoes.trim() || null,
+        Observacoes:           r.Observacoes.trim() || null,
       }))
 
       return db.insertNotasForm(dbRows, sheetName, tableName)
@@ -229,15 +229,17 @@ export function NotasForm({ tipo, sheetName }) {
   } else if (!metaOk) {
     statusMsg = 'Preencha Prova, Data, Responsável e Base para habilitar o envio.'
   } else {
-    statusMsg = 'Adicione pelo menos 1 aluno com nome e nota válida (0–99).'
+    statusMsg = 'Adicione pelo menos 1 aluno com nome e nota válida (1–10).'
   }
+
+  const isSoul = tipo === 'soul'
 
   // ── Render ────────────────────────────────────────────────────
   return (
     <div className={`card section ${tipo === 'soul' ? 'theme-soul' : ''}`}>
       <div className="card-header">
         <div className="card-title">
-          {tipo === 'soul' ? '📋 Notas Provinha Soul+' : '📋 Notas BEP Teen'}
+          {isSoul ? '📋 Notas Provinha Soul+' : '📋 Notas BEP Teen'}
         </div>
       </div>
 
@@ -313,17 +315,33 @@ export function NotasForm({ tipo, sheetName }) {
       </div>
 
       {/* ── Tabela de lançamento ── */}
-      <div className="table-wrap staging-table" style={{ marginBottom: 14 }}>
-        <table>
+      <div className="table-wrap staging-table" style={{ marginBottom: 14, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table style={{ minWidth: 980 }}>
           <thead>
-            <tr>
+            {/* Linha 1 — títulos, todos no topo */}
+            <tr style={{ verticalAlign: 'bottom' }}>
               <th style={{ width: 32 }}>#</th>
               <th style={{ minWidth: 190 }}>Aluno *</th>
-              <th style={{ width: 110, textAlign: 'center' }}>Nota *<br /><span style={{ fontWeight: 400, fontSize: 10 }}>0 – 99</span></th>
-              <th style={{ width: 110, textAlign: 'center' }}>Comunhão</th>
-              <th style={{ width: 110, textAlign: 'center' }}>VERSO</th>
-              <th style={{ minWidth: 160 }}>Observação</th>
+              <th style={{ width: 100, textAlign: 'center' }}>Nota *</th>
+              <th style={{ width: 100, textAlign: 'center' }}>Comunhão</th>
+              <th style={{ width: 100, textAlign: 'center' }}>VERSO</th>
+              <th style={{ width: 100, textAlign: 'center' }}>Discipulado</th>
+              <th colSpan={2} style={{ width: 200, textAlign: 'center' }}>300</th>
+              <th style={{ minWidth: 150 }}>Observação</th>
               <th style={{ width: 36 }}></th>
+            </tr>
+            {/* Linha 2 — subtítulos, todos no topo desta linha */}
+            <tr style={{ verticalAlign: 'top' }}>
+              <th style={{ width: 32 }}></th>
+              <th></th>
+              <th style={{ textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>1 – 10</th>
+              <th style={{ textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>Aluno nota 1000</th>
+              <th></th>
+              <th></th>
+              <th style={{ width: 100, textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>Treinamento</th>
+              <th style={{ width: 100, textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>Est. Bíblico</th>
+              <th></th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -357,19 +375,16 @@ export function NotasForm({ tipo, sheetName }) {
                 </td>
 
                 <td>
-                  <input
-                    type="number"
-                    min={0}
-                    max={99}
-                    step={1}
+                  <select
                     value={row.Nota}
-                    onChange={e => {
-                      const v = e.target.value.replace(/[^0-9.]/g, '')
-                      updateRow(row._rid, 'Nota', v)
-                    }}
-                    placeholder="0–99"
-                    style={{ textAlign: 'center' }}
-                  />
+                    onChange={e => updateRow(row._rid, 'Nota', e.target.value)}
+                    style={{ textAlign: 'center', width: '100%' }}
+                  >
+                    <option value="">—</option>
+                    {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
                 </td>
 
                 <td>
@@ -378,6 +393,18 @@ export function NotasForm({ tipo, sheetName }) {
 
                 <td>
                   <SimNao value={row.Verso} onChange={e => updateRow(row._rid, 'Verso', e.target.value)} />
+                </td>
+
+                <td>
+                  <SimNao value={row.Discipulado} onChange={e => updateRow(row._rid, 'Discipulado', e.target.value)} />
+                </td>
+
+                <td>
+                  <SimNao value={row.TrezentosTrainamento} onChange={e => updateRow(row._rid, 'TrezentosTrainamento', e.target.value)} />
+                </td>
+
+                <td>
+                  <SimNao value={row.TrezentosEstudo} onChange={e => updateRow(row._rid, 'TrezentosEstudo', e.target.value)} />
                 </td>
 
                 <td>
@@ -423,7 +450,127 @@ export function NotasForm({ tipo, sheetName }) {
   )
 }
 
+function NotasHistorico({ tipo, tableName }) {
+  const { data: bases }  = useTable('Bases')
+  const { data: provas } = useTable('Provas')
+  const [filtros, setFiltros] = useState({ id_base: '', id_provas: '' })
+
+  const tipoBase = tipo === 'soul' ? 'Soul+' : 'G148 Teen'
+  const { data: notas = [], isLoading } = useQuery({
+    queryKey: [tableName, 'all'],
+    queryFn: () => db.getAll(tableName)
+  })
+
+  const filtered = useMemo(() => {
+    const selectedBase  = filtros.id_base   ? (bases  || []).find(b => b.id_base   === filtros.id_base)   : null
+    const selectedProva = filtros.id_provas ? (provas || []).find(p => p.id_provas === filtros.id_provas) : null
+
+    return notas.filter(n => {
+      if (filtros.id_base && selectedBase) {
+        const noteBaseId   = String(n.id_base ?? n.base_id ?? '').trim()
+        const noteBaseName = String(n.Base    ?? n.base    ?? '').trim()
+        const matchById   = noteBaseId   && noteBaseId   === String(filtros.id_base).trim()
+        const matchByName = noteBaseName && noteBaseName === String(selectedBase.Base ?? '').trim()
+        if (!matchById && !matchByName) return false
+      }
+
+      if (filtros.id_provas && selectedProva) {
+        const noteProvaId    = String(n.id_provas ?? n.prova_id ?? '').trim()
+        const noteProvaTitulo = String(n.titulo   ?? n.Titulo   ?? '').trim()
+        const provaNome      = String(selectedProva.nome ?? selectedProva.Provas ?? '').trim()
+        const matchById   = noteProvaId    && noteProvaId    === String(filtros.id_provas).trim()
+        const matchByName = noteProvaTitulo && provaNome && noteProvaTitulo === provaNome
+        if (!matchById && !matchByName) return false
+      }
+
+      return true
+    }).sort((a, b) => {
+      const da = a.data || a.Data || ''
+      const db2 = b.data || b.Data || ''
+      return db2.localeCompare(da)
+    })
+  }, [notas, filtros, bases, provas])
+
+  return (
+    <div className={`card section ${tipo === 'soul' ? 'theme-soul' : ''}`} style={{ marginTop: 24 }}>
+      <div className="card-header"><div className="card-title">🔍 Consulta de Notas Lançadas ({tipoBase})</div></div>
+      <div className="card-body">
+        <div className="form-grid" style={{ marginBottom: 16 }}>
+          <div className="form-group">
+            <label>Filtrar por Base</label>
+            <select value={filtros.id_base} onChange={e => setFiltros(f => ({ ...f, id_base: e.target.value }))}>
+              <option value="">Todas as bases…</option>
+              {(bases || [])
+                .filter(b => b.Tipo === tipoBase)
+                .sort((a, b) => (a.Base || '').localeCompare(b.Base || ''))
+                .map(b => (
+                  <option key={b.id_base} value={b.id_base}>{b.Base}</option>
+                ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Filtrar por Prova</label>
+            <select value={filtros.id_provas} onChange={e => setFiltros(f => ({ ...f, id_provas: e.target.value }))}>
+              <option value="">Todas as provas…</option>
+              {(provas || [])
+                .filter(p => p.tipo === tipoBase)
+                .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''))
+                .map(p => (
+                  <option key={p.id_provas} value={p.id_provas}>{p.nome}</option>
+                ))}
+            </select>
+          </div>
+        </div>
+
+        {isLoading ? <div className="spinner" /> : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Aluno</th>
+                  <th>Base</th>
+                  <th>Prova</th>
+                  <th style={{ textAlign: 'center' }}>Nota</th>
+                  <th>Observação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', opacity: 0.5, padding: 20 }}>Nenhum registro encontrado com estes filtros.</td></tr>
+                ) : filtered.map(n => (
+                  <tr key={n.id}>
+                    <td style={{ fontSize: 12 }}>{fmtDate(n.data || n.Data)}</td>
+                    <td style={{ fontWeight: 600 }}>{n.nome_aluno || n.Membros}</td>
+                    <td style={{ fontSize: 12 }}>{n.Base}</td>
+                    <td style={{ fontSize: 12 }}>{n.titulo || n.id_provas}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--c2)' }}>{n.nota ?? n.Nota}</td>
+                    <td style={{ fontSize: 11, opacity: 0.7 }}>{n.observacoes || n.Observacoes || '—'}</td>
+                    <td>
+                      <button className="btn-icon" onClick={() => alert('Função de correção em desenvolvimento para este histórico.')} title="Corrigir nota">✏️</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={{ fontSize: 11, opacity: 0.5, marginTop: 8 }}>{filtered.length} registro{filtered.length !== 1 ? 's' : ''} encontrado{filtered.length !== 1 ? 's' : ''}.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Páginas individuais ──────────────────────────────────────────
 export default function Notas() {
-  return <NotasForm tipo="teen" sheetName="NOTAS" />
+  const { type } = useParams()
+  const currentType = type === 'soul' ? 'soul' : 'teen'
+  const tableName = currentType === 'soul' ? 'Notas_Soul' : 'Notas_Teen'
+  
+  return (
+    <>
+      <NotasForm tipo={currentType} sheetName={currentType.toUpperCase()} />
+      <NotasHistorico tipo={currentType} tableName={tableName} />
+    </>
+  )
 }

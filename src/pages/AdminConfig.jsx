@@ -1,18 +1,32 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../store/authStore'
 import { useTable } from '../hooks/useTable'
+import { db } from '../api/db'
+import { useUIStore } from '../store/uiStore'
+
+function fmtDataBR(iso) {
+  if (!iso) return '—'
+  const [a, m, d] = iso.split('-')
+  return `${d}/${m}/${a}`
+}
 
 const TABS = [
-  { id: 'geral', label: '⚙️ Geral', icon: '⚙️' },
-  { id: 'provas', label: '📝 Provas', icon: '📝' },
-  { id: 'regioes', label: '🌍 Regiões', icon: '🌍' },
-  { id: 'distritos', label: '📍 Distritos', icon: '📍' },
-  { id: 'igrejas', label: '⛪ Igrejas', icon: '⛪' },
-  { id: 'script', label: '📜 Script', icon: '📜' },
+  { id: 'provas',     label: '📝 Provas',     icon: '📝' },
+  { id: 'desafios',   label: '🏅 Desafios',   icon: '🏅' },
+  { id: 'geral',      label: '⚙️ Geral',      icon: '⚙️' },
+  { id: 'trimestres', label: '📅 Trimestres', icon: '📅' },
+  { id: 'regioes',    label: '🌍 Regiões',    icon: '🌍' },
+  { id: 'distritos',  label: '📍 Distritos',  icon: '📍' },
+  { id: 'igrejas',    label: '⛪ Igrejas',    icon: '⛪' },
+  { id: 'disciplos',  label: '📖 Discípulos', icon: '📖' },
+  { id: 'diagnostico', label: '📊 Diagnóstico', icon: '🛡️' },
 ]
 
 export default function AdminConfig() {
+  const { min } = useParams()
   const { isAuditMode, changePassword, logout } = useAuthStore()
   const [activeTab, setActiveTab] = useState('provas') // Inicia em Provas que é o mais comum
   const [pwd, setPwd] = useState({ cur: '', novo: '', conf: '' })
@@ -26,8 +40,46 @@ export default function AdminConfig() {
     else { toast.error('Senha atual incorreta.') }
   }
 
+  const currentMin = min === 'soul' ? 'Soul+' : min === 'teen' ? 'G148 Teen' : null
+
+  const filteredTabs = useMemo(() => {
+    // Se estiver no contexto de um ministério específico
+    if (min === 'soul') {
+      return TABS.filter(t => ['provas', 'desafios'].includes(t.id))
+    }
+    if (min === 'teen') {
+      return TABS.filter(t => ['provas', 'desafios', 'disciplos'].includes(t.id))
+    }
+    // Se for Configurações Gerais (/admin/config)
+    return TABS.filter(t => !['provas', 'desafios', 'disciplos'].includes(t.id))
+  }, [min])
+
+  // Ajusta a aba ativa se ela não existir no contexto atual
+  useEffect(() => {
+    const validSoul = ['provas', 'desafios']
+    const validTeen = ['provas', 'desafios', 'disciplos']
+    const validGeral = ['geral', 'trimestres', 'regioes', 'distritos', 'igrejas', 'diagnostico']
+    if (min === 'soul' && !validSoul.includes(activeTab)) {
+      setActiveTab('provas')
+    } else if (min === 'teen' && !validTeen.includes(activeTab)) {
+      setActiveTab('provas')
+    } else if (!min && !validGeral.includes(activeTab)) {
+      setActiveTab('geral')
+    }
+  }, [min, activeTab])
+
   return (
-    <div className="admin-config-container fade-in">
+    <div className={`admin-config-container fade-in ${min === 'soul' ? 'theme-soul' : ''}`}>
+      {currentMin && (
+        <div className="status-bar ok" style={{ marginBottom: 15, borderRadius: 12, padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 10, background: min === 'soul' ? 'var(--soul-amber)' : 'rgba(124,58,237,.1)', color: min === 'soul' ? 'var(--soul-brown)' : 'var(--c1)', border: '1px solid currentColor' }}>
+          <span style={{ fontSize: 20 }}>{min === 'soul' ? '☀️' : '⚡'}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Configurações — {currentMin}</div>
+            <div style={{ fontSize: 11, opacity: 0.8 }}>Você está editando apenas dados deste ministério.</div>
+          </div>
+        </div>
+      )}
+
       <div className="card section" style={{ marginBottom: 20 }}>
         <div className="card-header">
           <div className="card-title">⚙️ Painel de Administração Mestre</div>
@@ -38,7 +90,7 @@ export default function AdminConfig() {
         
         {/* Abas Estilizadas */}
         <div className="admin-tabs-nav">
-          {TABS.map(t => (
+          {filteredTabs.map(t => (
             <button 
               key={t.id} 
               className={`admin-tab-btn ${activeTab === t.id ? 'active' : ''}`}
@@ -53,55 +105,51 @@ export default function AdminConfig() {
 
       <div className="admin-tab-content">
         {activeTab === 'geral' && (
-          <div className="card section">
-            <div className="card-header"><div className="card-title">🔒 Segurança da Conta</div></div>
-            <div className="card-body">
-              <form onSubmit={handleChangePwd}>
-                <div className="form-grid" style={{ maxWidth: 400 }}>
-                  <div className="form-group"><label>Senha Atual</label><input type="password" value={pwd.cur} onChange={e => setPwd(p => ({ ...p, cur: e.target.value }))} /></div>
-                  <div className="form-group"><label>Nova Senha</label><input type="password" value={pwd.novo} onChange={e => setPwd(p => ({ ...p, novo: e.target.value }))} /></div>
-                  <div className="form-group"><label>Repetir Nova Senha</label><input type="password" value={pwd.conf} onChange={e => setPwd(p => ({ ...p, conf: e.target.value }))} /></div>
-                </div>
-                <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-                  <button type="submit" className="btn btn-primary">Alterar Senha</button>
-                  <button type="button" className="btn btn-outline danger" onClick={() => confirm('Sair do Admin?') && logout()}>Sair do Admin</button>
-                </div>
-              </form>
+          <>
+            <div className="card section">
+              <div className="card-header"><div className="card-title">🔒 Segurança da Conta</div></div>
+              <div className="card-body">
+                <form onSubmit={handleChangePwd}>
+                  <div className="form-grid" style={{ maxWidth: 400 }}>
+                    <div className="form-group"><label>Senha Atual</label><input type="password" value={pwd.cur} onChange={e => setPwd(p => ({ ...p, cur: e.target.value }))} /></div>
+                    <div className="form-group"><label>Nova Senha</label><input type="password" value={pwd.novo} onChange={e => setPwd(p => ({ ...p, novo: e.target.value }))} /></div>
+                    <div className="form-group"><label>Repetir Nova Senha</label><input type="password" value={pwd.conf} onChange={e => setPwd(p => ({ ...p, conf: e.target.value }))} /></div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+                    <button type="submit" className="btn btn-primary">Alterar Senha</button>
+                    <button type="button" className="btn btn-outline danger" onClick={() => confirm('Sair do Admin?') && logout()}>Sair do Admin</button>
+                  </div>
+                </form>
+              </div>
             </div>
-          </div>
+          </>
         )}
 
-        {activeTab === 'provas' && <ProvasCRUD />}
-        {activeTab === 'regioes' && <DimensionCRUD table="Regiao" pk="id" field="nome" label="Região" />}
-        {activeTab === 'distritos' && <DimensionCRUD table="Distritos" pk="id" field="nome" label="Distrito" parentField="regiao_id" parentPkField="id" parentTable="Regiao" parentLabel="nome" />}
-        {activeTab === 'igrejas' && <DimensionCRUD table="Igrejas" pk="id" field="nome" label="Igreja" parentField="distrito_id" parentPkField="id" parentTable="Distritos" parentLabel="nome" />}
+        {activeTab === 'provas' && <ProvasCRUD filterMin={currentMin} />}
+        {activeTab === 'trimestres' && <TrimestresConfig />}
+        {activeTab === 'desafios' && <DesafiosCatalogoConfig filterMin={currentMin} />}
+        {activeTab === 'disciplos' && <DiscipulosConfig />}
+        {activeTab === 'regioes' && <DimensionCRUD table="Regiao" pk="id_regiao" field="Regiao" label="Região" />}
+        {activeTab === 'distritos' && <DimensionCRUD table="Distritos" pk="id_distritos" field="Distritos" label="Distrito" parentField="id_regiao" parentPkField="id_regiao" parentTable="Regiao" parentLabel="Regiao" />}
+        {activeTab === 'igrejas' && <DimensionCRUD table="Igrejas" pk="id_igrejas" field="Igrejas" label="Igreja" parentField="id_distritos" parentPkField="id_distritos" parentTable="Distritos" parentLabel="Distritos" />}
+        {activeTab === 'diagnostico' && <DiagnosticoConfig />}
 
-        {activeTab === 'script' && (
-          <div className="card section">
-            <div className="card-header"><div className="card-title">📜 Google Apps Script</div></div>
-            <div className="card-body">
-              <p style={{ fontSize: 13, opacity: 0.8, marginBottom: 16 }}>Código para manter o espelhamento automático com o Google Sheets.</p>
-              <pre className="code-block">
-                {`function doGet(e) { /* ... código omitido por brevidade no render, mas presente no arquivo ... */ }`}
-              </pre>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
 }
 
 // ── COMPONENTE: Gerenciamento de Provas ──────────────────────
-function ProvasCRUD() {
+function ProvasCRUD({ filterMin }) {
+  const showError = useUIStore(s => s.showError)
   const { isAuditMode } = useAuthStore()
   const { data, isLoading, insert, update, remove } = useTable('Provas')
-  const [form, setForm] = useState({ tipo: '', nome: '', data: '' })
+  const [form, setForm] = useState({ tipo: filterMin || '', nome: '', data: '' })
   const [editingId, setEditingId] = useState(null)
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.tipo || !form.nome || !form.data) return toast.error('Preencha tudo.')
+    if (!form.tipo || !form.nome || !form.data) return showError('Formulário Incompleto', 'Preencha o tipo, nome e data da prova.')
     if (editingId) {
       await update.mutateAsync({ id: editingId, data: form })
       toast.success('Prova atualizada!')
@@ -113,7 +161,9 @@ function ProvasCRUD() {
     setForm({ tipo: '', nome: '', data: '' })
   }
 
-  const sorted = [...(data || [])].sort((a,b) => (a.data || '').localeCompare(b.data || ''))
+  const sorted = [...(data || [])]
+    .filter(p => !filterMin || p.tipo === filterMin)
+    .sort((a,b) => (a.data || '').localeCompare(b.data || ''))
 
   return (
     <div className="dimension-crud">
@@ -122,7 +172,14 @@ function ProvasCRUD() {
         <div className="card-body">
           <form onSubmit={handleSubmit}>
             <div className="form-grid">
-              <div className="form-group"><label>Tipo</label><select value={form.tipo} onChange={e => setForm({...form, tipo: e.target.value})}><option value="">Selecione...</option><option value="G148 Teen">G148 Teen</option><option value="Soul+">Soul+</option></select></div>
+              <div className="form-group">
+                <label>Tipo</label>
+                <select value={form.tipo} onChange={e => setForm({...form, tipo: e.target.value})} disabled={Boolean(filterMin)}>
+                  <option value="">Selecione...</option>
+                  <option value="G148 Teen">G148 Teen</option>
+                  <option value="Soul+">Soul+</option>
+                </select>
+              </div>
               <div className="form-group"><label>Nome da Prova</label><input value={form.nome} onChange={e => setForm({...form, nome: e.target.value})} placeholder="Ex: BEP 1ª Fase" /></div>
               <div className="form-group"><label>Data</label><input type="date" value={form.data} onChange={e => setForm({...form, data: e.target.value})} /></div>
             </div>
@@ -141,7 +198,7 @@ function ProvasCRUD() {
                 <tr key={p.id}>
                   <td><span className={`chip ${p.tipo === 'Soul+' ? 'chip-soul' : 'chip-teen'}`}>{p.tipo}</span></td>
                   <td><strong>{p.nome}</strong></td>
-                  <td>{p.data}</td>
+                  <td>{fmtDataBR(p.data)}</td>
                   <td>
                     <div className="td-actions">
                       <button className="btn-icon" onClick={() => { setForm({tipo: p.tipo, nome: p.nome, data: p.data}); setEditingId(p.id) }} disabled={!isAuditMode}>✏️</button>
@@ -158,8 +215,611 @@ function ProvasCRUD() {
   )
 }
 
+// ── COMPONENTE: Configuração de Trimestres ───────────────────
+function TrimestresConfig() {
+  const showError = useUIStore(s => s.showError)
+  const { isAuditMode } = useAuthStore()
+  const qc = useQueryClient()
+  const anoAtual = new Date().getFullYear()
+  const [ano, setAno] = useState(anoAtual)
+  const [form, setForm] = useState({ trimestre: '', primeiro_sabado: '', ultimo_sabado: '' })
+  const [editingId, setEditingId] = useState(null)
+
+  const { data: trimestres = [], isLoading } = useQuery({
+    queryKey: ['configuracao_trimestres', ano],
+    queryFn: () => db.getConfiguracaoTrimestres(ano),
+  })
+
+  const upsert = useMutation({
+    mutationFn: (payload) => db.upsertConfiguracaoTrimestre(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['configuracao_trimestres', ano] })
+      toast.success('Trimestre salvo!')
+      setForm({ trimestre: '', primeiro_sabado: '', ultimo_sabado: '' })
+      setEditingId(null)
+    },
+    onError: (e) => showError('Erro ao Salvar Trimestre', e.message),
+  })
+
+  const del = useMutation({
+    mutationFn: (id) => db.deleteConfiguracaoTrimestre(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['configuracao_trimestres', ano] })
+      toast.success('Removido.')
+    },
+  })
+
+  function gerarSabados(primeiro, ultimo) {
+    const sabados = []
+    let d = new Date(primeiro + 'T12:00:00')
+    while (d.getDay() !== 6) d.setDate(d.getDate() + 1)
+    const fim = new Date(ultimo + 'T12:00:00')
+    while (d <= fim) {
+      sabados.push(d.toISOString().slice(0, 10))
+      d = new Date(d)
+      d.setDate(d.getDate() + 7)
+    }
+    return sabados
+  }
+
+  const preview = useMemo(() => {
+    if (!form.primeiro_sabado || !form.ultimo_sabado) return null
+    try {
+      const s = gerarSabados(form.primeiro_sabado, form.ultimo_sabado)
+      return s.length
+    } catch { return null }
+  }, [form.primeiro_sabado, form.ultimo_sabado])
+
+  const NOMES = { 1: '1º Trimestre', 2: '2º Trimestre', 3: '3º Trimestre', 4: '4º Trimestre' }
+
+  function handleSalvar(e) {
+    e.preventDefault()
+    if (!form.trimestre || !form.primeiro_sabado || !form.ultimo_sabado) {
+      showError('Dados Incompletos', 'Selecione o trimestre e as datas de início/fim.'); return
+    }
+    upsert.mutate({ ano, trimestre: Number(form.trimestre), primeiro_sabado: form.primeiro_sabado, ultimo_sabado: form.ultimo_sabado })
+  }
+
+  function handleEditar(cfg) {
+    setForm({
+      trimestre: String(cfg.trimestre),
+      primeiro_sabado: cfg.primeiro_sabado,
+      ultimo_sabado: cfg.ultimo_sabado
+    })
+    setEditingId(cfg.id)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function handleCancelar() {
+    setForm({ trimestre: '', primeiro_sabado: '', ultimo_sabado: '' })
+    setEditingId(null)
+  }
+
+  return (
+    <div className="dimension-crud">
+      <div className="card section">
+        <div className="card-header">
+          <div className="card-title">📅 {editingId ? '✏️ Editar Trimestre' : '📅 Configuração de Trimestres — Sábados'}</div>
+          {editingId && (
+            <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={handleCancelar}>
+              ✕ Cancelar
+            </button>
+          )}
+        </div>
+        <div className="card-body">
+          <p style={{ fontSize: 12, opacity: 0.7, marginBottom: 16 }}>
+            Defina o primeiro e o último sábado de cada trimestre. O sistema gerará automaticamente
+            todos os sábados do período para rastreamento dos desafios semanais.
+          </p>
+          <div className="form-grid" style={{ gridTemplateColumns: 'auto 1fr 1fr 1fr auto', alignItems: 'end' }}>
+            <div className="form-group">
+              <label>Ano</label>
+              <select value={ano} onChange={e => setAno(Number(e.target.value))} style={{ width: 90 }}>
+                {[anoAtual - 1, anoAtual, anoAtual + 1].map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Trimestre *</label>
+              <select value={form.trimestre} onChange={e => setForm(f => ({ ...f, trimestre: e.target.value }))} disabled={Boolean(editingId)}>
+                <option value="">Selecione…</option>
+                {[1, 2, 3, 4].map(t => <option key={t} value={t}>{NOMES[t]}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>1º Sábado *</label>
+              <input type="date" value={form.primeiro_sabado} onChange={e => setForm(f => ({ ...f, primeiro_sabado: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label>Último Sábado *</label>
+              <input type="date" value={form.ultimo_sabado} onChange={e => setForm(f => ({ ...f, ultimo_sabado: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label style={{ visibility: 'hidden' }}>–</label>
+              <button className="btn btn-primary" onClick={handleSalvar} disabled={upsert.isPending}>
+                {upsert.isPending ? <span className="spinner" /> : (editingId ? '💾 Atualizar' : '💾 Salvar')}
+              </button>
+            </div>
+          </div>
+          {preview !== null && (
+            <div className="status-bar ok" style={{ marginTop: 8 }}>
+              {preview} sábados no período · {preview > 0 ? (50 / preview).toFixed(2) : '—'} pts/sáb (ex. desafio de 50 pts)
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header"><div className="card-title">Trimestres Configurados — {ano}</div></div>
+        {isLoading ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Trimestre</th>
+                  <th>1º Sábado</th>
+                  <th>Último Sábado</th>
+                  <th>Sábados</th>
+                  <th>Status</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[1, 2, 3, 4].map(t => {
+                  const cfg = trimestres.find(x => x.trimestre === t)
+                  const numSab = cfg ? gerarSabados(cfg.primeiro_sabado, cfg.ultimo_sabado).length : null
+                  return (
+                    <tr key={t}>
+                      <td><strong>{NOMES[t]}</strong></td>
+                      <td>{fmtDataBR(cfg?.primeiro_sabado)}</td>
+                      <td>{fmtDataBR(cfg?.ultimo_sabado)}</td>
+                      <td>{numSab != null ? <span className="chip chip-good">{numSab} sáb.</span> : '—'}</td>
+                      <td>
+                        {cfg
+                          ? <span className="chip chip-good">Configurado</span>
+                          : <span className="chip chip-warn">Pendente</span>}
+                      </td>
+                      <td>
+                        {cfg && (
+                          <div className="td-actions">
+                            <button className="btn-icon" onClick={() => handleEditar(cfg)} title="Editar">✏️</button>
+                            <button
+                              className="btn-icon danger"
+                              onClick={() => confirm(`Remover config do ${NOMES[t]}?`) && del.mutate(cfg.id)}
+                              title="Remover"
+                            >🗑️</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── COMPONENTE: Catálogo de Desafios ────────────────────────
+const CATEGORIAS   = ['admin', 'da', 'estudo', 'midia', 'missao']
+const CAT_LABEL    = { admin: 'Administrativo', da: 'Desafio DA', estudo: 'Estudo', midia: 'Mídia', missao: 'Missão' }
+const RASTREAMENTOS = ['pontual', 'semanal']
+const PERIODICIDADES = ['trimestral', 'mensal', 'anual']
+
+const NOMES_MESES_FULL = [
+  'Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro',
+]
+
+function emptyDesafio(tipo = 'G148 Teen') {
+  return { codigo: '', nome: '', descricao: '', categoria: 'admin', rastreamento: 'pontual', periodicidade: 'trimestral', pontos_total: '', ordem: '', ativo: true, mes_ref: '', tipo }
+}
+
+function DesafiosCatalogoConfig({ filterMin }) {
+  const qc = useQueryClient()
+  const showError = useUIStore(s => s.showError)
+  const { data: desafios = [], isLoading } = useQuery({
+    queryKey: ['desafios_catalogo_all'],
+    queryFn: () => db.getDesafiosCatalogoAll(),
+  })
+  const [form, setForm] = useState(emptyDesafio(filterMin || 'G148 Teen'))
+  const [editingId, setEditingId] = useState(null)
+
+  const upsert = useMutation({
+    mutationFn: (payload) => db.upsertDesafioCatalogo(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['desafios_catalogo_all'] })
+      qc.invalidateQueries({ queryKey: ['desafios_catalogo'] })
+      toast.success(editingId ? 'Desafio atualizado!' : 'Desafio criado!')
+      setForm(emptyDesafio(filterMin || 'G148 Teen'))
+      setEditingId(null)
+    },
+    onError: (e) => {
+      if (e.message.includes('tipo')) {
+        showError(
+          'Estrutura do Banco Incompleta',
+          'A coluna "tipo" ainda não existe na tabela "desafios_catalogo" no seu banco de dados Supabase.',
+          'Execute o SQL: ALTER TABLE desafios_catalogo ADD COLUMN tipo TEXT DEFAULT \'G148 Teen\';'
+        )
+      } else {
+        showError('Erro ao Salvar Desafio', e.message)
+      }
+    },
+  })
+
+  const del = useMutation({
+    mutationFn: (id) => db.deleteDesafioCatalogo(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['desafios_catalogo_all'] })
+      qc.invalidateQueries({ queryKey: ['desafios_catalogo'] })
+      toast.success('Desafio removido.')
+    },
+    onError: (e) => showError('Erro ao Remover', e.message),
+  })
+
+  const toggleAtivo = useMutation({
+    mutationFn: ({ id, ...rest }) => db.upsertDesafioCatalogo({ id, ...rest }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['desafios_catalogo_all'] })
+      qc.invalidateQueries({ queryKey: ['desafios_catalogo'] })
+    },
+    onError: (e) => showError('Erro ao Alterar Status', e.message),
+  })
+
+  function setF(k, v) { setForm(f => ({ ...f, [k]: v })) }
+
+  function handleEditar(d) {
+    setForm({
+      codigo: d.codigo, nome: d.nome, descricao: d.descricao ?? '',
+      categoria: d.categoria ?? 'admin', rastreamento: d.rastreamento,
+      periodicidade: d.periodicidade, pontos_total: String(d.pontos_total),
+      ordem: String(d.ordem ?? ''), ativo: d.ativo, mes_ref: d.mes_ref ? String(d.mes_ref) : '',
+      tipo: d.tipo || 'G148 Teen'
+    })
+    setEditingId(d.id)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function handleSalvar() {
+    if (!form.codigo || !form.nome || !form.pontos_total) {
+      toast.error('Preencha código, nome e pontuação.'); return
+    }
+    if (form.periodicidade === 'mensal' && !form.mes_ref) {
+      toast.error('Para desafio mensal, defina o Mês de referência.'); return
+    }
+    upsert.mutate({ id: editingId ?? undefined, ...form })
+  }
+
+  function handleCancelar() { setForm(emptyDesafio(filterMin || 'G148 Teen')); setEditingId(null) }
+
+  const filtered = useMemo(() => {
+    return desafios.filter(d => !filterMin || (d.tipo || 'G148 Teen') === filterMin)
+  }, [desafios, filterMin])
+
+  return (
+    <div className="dimension-crud">
+      {/* Formulário */}
+      <div className="card section">
+        <div className="card-header">
+          <div className="card-title">{editingId ? '✏️ Editar Desafio' : '➕ Novo Desafio'}</div>
+          {editingId && (
+            <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={handleCancelar}>
+              ✕ Cancelar
+            </button>
+          )}
+        </div>
+        <div className="card-body">
+          <div className="form-grid">
+            <div className="form-group">
+              <label>Código único *</label>
+              <input value={form.codigo} onChange={e => setF('codigo', e.target.value)} placeholder="ex: batismo_c1s1" disabled={Boolean(editingId)} />
+            </div>
+            <div className="form-group" style={{ gridColumn: 'span 2' }}>
+              <label>Nome *</label>
+              <input value={form.nome} onChange={e => setF('nome', e.target.value)} placeholder="Nome do desafio" />
+            </div>
+            <div className="form-group">
+              <label>Tipo (Ministério)</label>
+              <select value={form.tipo} onChange={e => setF('tipo', e.target.value)} disabled={Boolean(filterMin)}>
+                <option value="G148 Teen">G148 Teen</option>
+                <option value="Soul+">Soul+</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Categoria</label>
+              <select value={form.categoria} onChange={e => setF('categoria', e.target.value)}>
+                {CATEGORIAS.map(c => <option key={c} value={c}>{CAT_LABEL[c]}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Rastreamento</label>
+              <select value={form.rastreamento} onChange={e => setF('rastreamento', e.target.value)}>
+                {RASTREAMENTOS.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Periodicidade</label>
+              <select value={form.periodicidade} onChange={e => { setF('periodicidade', e.target.value); if (e.target.value !== 'mensal') setF('mes_ref', '') }}>
+                {PERIODICIDADES.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            {form.periodicidade === 'mensal' && (
+              <div className="form-group">
+                <label>Mês de referência *</label>
+                <select value={form.mes_ref} onChange={e => setF('mes_ref', e.target.value)}>
+                  <option value="">Selecione o mês…</option>
+                  {NOMES_MESES_FULL.map((nome, i) => (
+                    <option key={i + 1} value={i + 1}>{nome} (Trim {Math.ceil((i + 1) / 3)})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="form-group">
+              <label>Pontos *</label>
+              <input type="number" min="0" step="0.01" value={form.pontos_total} onChange={e => setF('pontos_total', e.target.value)} placeholder="200" />
+            </div>
+            <div className="form-group">
+              <label>Ordem</label>
+              <input type="number" min="0" value={form.ordem} onChange={e => setF('ordem', e.target.value)} placeholder="99" style={{ width: 80 }} />
+            </div>
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+              <label>Descrição</label>
+              <input value={form.descricao} onChange={e => setF('descricao', e.target.value)} placeholder="Descrição detalhada do desafio (opcional)" />
+            </div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            {editingId && <button className="btn btn-outline" onClick={handleCancelar}>Cancelar</button>}
+            <button className="btn btn-primary" onClick={handleSalvar} disabled={upsert.isPending}>
+              {upsert.isPending ? <span className="spinner" /> : (editingId ? '💾 Atualizar' : '➕ Criar Desafio')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Lista */}
+      <div className="card">
+        <div className="card-header"><div className="card-title">Catálogo de Desafios ({desafios.filter(d => !filterMin || d.tipo === filterMin).length})</div></div>
+        {isLoading ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 30 }}>#</th>
+                  <th>Nome</th>
+                  <th>Tipo</th>
+                  <th>Categoria</th>
+                  <th>Rastreamento</th>
+                  <th>Periodicidade</th>
+                  <th style={{ width: 70, textAlign: 'center' }}>Pts</th>
+                  <th style={{ width: 80, textAlign: 'center' }}>Ativo</th>
+                  <th style={{ width: 90 }}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {desafios.filter(d => !filterMin || d.tipo === filterMin).map(d => (
+                  <tr key={d.id} className={!d.ativo ? 'row-inactive' : ''}>
+                    <td style={{ textAlign: 'center', fontSize: 11, opacity: 0.5 }}>{d.ordem}</td>
+                    <td>
+                      <div style={{ fontWeight: 500 }}>{d.nome}</div>
+                      <div style={{ fontSize: 11, opacity: 0.5 }}>{d.codigo}</div>
+                    </td>
+                    <td>
+                      <span className={`chip ${d.tipo === 'Soul+' ? 'chip-warn' : 'chip-teen'}`} style={{ fontSize: 10 }}>
+                        {d.tipo || 'G148 Teen'}
+                      </span>
+                    </td>
+                    <td><span className="chip chip-muted">{CAT_LABEL[d.categoria] ?? d.categoria}</span></td>
+                    <td><span className={`chip ${d.rastreamento === 'semanal' ? 'chip-good' : 'chip-warn'}`}>{d.rastreamento}</span></td>
+                    <td>
+                      <span className="chip chip-muted">{d.periodicidade}</span>
+                      {d.mes_ref && (
+                        <div style={{ fontSize: 10, opacity: 0.6, marginTop: 2 }}>
+                          {NOMES_MESES_FULL[d.mes_ref - 1]} · Trim {Math.ceil(d.mes_ref / 3)}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--c2)' }}>{d.pontos_total}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        className={`chip ${d.ativo ? 'chip-good' : 'chip-muted'}`}
+                        style={{ cursor: 'pointer', border: 'none' }}
+                        onClick={() => toggleAtivo.mutate({ ...d, ativo: !d.ativo })}
+                        title={d.ativo ? 'Desativar' : 'Ativar'}
+                      >
+                        {d.ativo ? '✓ Ativo' : '✗ Inativo'}
+                      </button>
+                    </td>
+                    <td>
+                      <div className="td-actions">
+                        <button className="btn-icon" onClick={() => handleEditar(d)} title="Editar">✏️</button>
+                        <button
+                          className="btn-icon danger"
+                          title="Excluir permanentemente"
+                          onClick={() => {
+                            if (!confirm(`Excluir desafio "${d.nome}"? Esta ação remove também todos os registros!`)) return
+                            del.mutate(d.id)
+                          }}
+                        >🗑️</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── COMPONENTE: Discípulos Teen — pesos e pontos por batismo ──
+function DiscipulosConfig() {
+  const showError = useUIStore(s => s.showError)
+  const { isAuditMode } = useAuthStore()
+  const qc = useQueryClient()
+
+  const { data: catalogo = [], isLoading: loadingCatalogo } = useQuery({
+    queryKey: ['discipulos_catalogo'],
+    queryFn: () => db.getDiscipulosRequisitoCatalogo(),
+  })
+
+  const { data: batismosCfg, isLoading: loadingBat } = useQuery({
+    queryKey: ['batismos_config'],
+    queryFn: () => db.getBatismosConfig(),
+  })
+
+  const [pontosBatismo, setPontosBatismo] = useState('')
+  const [editingPontos, setEditingPontos] = useState({}) // { [id]: valor }
+
+  // Sincroniza campo local com dados carregados
+  useEffect(() => {
+    if (batismosCfg) setPontosBatismo(String(batismosCfg.pontos_por_batismo ?? 0))
+  }, [batismosCfg])
+
+  useEffect(() => {
+    if (catalogo.length) {
+      const init = {}
+      catalogo.forEach(r => { init[r.id] = String(r.pontos ?? 0) })
+      setEditingPontos(init)
+    }
+  }, [catalogo])
+
+  const upsertRequisito = useMutation({
+    mutationFn: (payload) => db.upsertDiscipuloRequisitoCatalogo(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['discipulos_catalogo'] })
+      toast.success('Pontuação salva!')
+    },
+    onError: (e) => toast.error('Erro: ' + e.message),
+  })
+
+  const upsertBatismos = useMutation({
+    mutationFn: (payload) => db.upsertBatismosConfig(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['batismos_config'] })
+      toast.success('Pontos por batismo salvos!')
+    },
+    onError: (e) => toast.error('Erro: ' + e.message),
+  })
+
+  function handleSalvarRequisito(req) {
+    upsertRequisito.mutate({
+      id: req.id,
+      numero: req.numero,
+      descricao: req.descricao,
+      pontos: Number(editingPontos[req.id] ?? 0),
+      ativo: req.ativo,
+    })
+  }
+
+  if (loadingCatalogo || loadingBat) {
+    return <div className="empty-state"><div className="spinner" /></div>
+  }
+
+  return (
+    <div className="dimension-crud">
+      {/* Pontos por Batismo */}
+      <div className="card section">
+        <div className="card-header">
+          <div className="card-title">🕊️ Pontos por Batismo</div>
+        </div>
+        <div className="card-body">
+          <p style={{ fontSize: 13, opacity: 0.75, marginBottom: 14 }}>
+            Cada batismo registrado na seção Batismos vai gerar esta pontuação para a base.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, maxWidth: 320 }}>
+            <div className="form-group" style={{ margin: 0, flex: 1 }}>
+              <label>Pontos por batismo</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={pontosBatismo}
+                onChange={e => setPontosBatismo(e.target.value)}
+                disabled={!isAuditMode}
+              />
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ marginTop: 20 }}
+              onClick={() => upsertBatismos.mutate({ pontos_por_batismo: Number(pontosBatismo) })}
+              disabled={!isAuditMode || upsertBatismos.isPending}
+            >
+              {upsertBatismos.isPending ? <span className="spinner" /> : '💾 Salvar'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 11 Requisitos do Cartão Discípulo */}
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">📖 Cartão Discípulo Teen — Pesos dos Requisitos</div>
+        </div>
+        <p style={{ fontSize: 13, opacity: 0.75, padding: '0 16px 12px' }}>
+          Defina quantos pontos cada requisito vale para o aluno. Os pontos só são computados
+          quando os três campos (Sim, Data, Responsável) estiverem preenchidos.
+        </p>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 36, textAlign: 'center' }}>#</th>
+                <th>Requisito</th>
+                <th style={{ width: 100, textAlign: 'center' }}>Pontos</th>
+                <th style={{ width: 80, textAlign: 'center' }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {catalogo.map(req => (
+                <tr key={req.id}>
+                  <td style={{ textAlign: 'center', fontWeight: 700 }}>{req.numero}</td>
+                  <td>
+                    <span style={{ fontSize: 13, lineHeight: 1.4 }}>
+                      {req.descricao.length > 120 ? req.descricao.slice(0, 117) + '…' : req.descricao}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={editingPontos[req.id] ?? ''}
+                      onChange={e => setEditingPontos(p => ({ ...p, [req.id]: e.target.value }))}
+                      disabled={!isAuditMode}
+                      style={{ width: 75, textAlign: 'center', fontWeight: 700 }}
+                    />
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <button
+                      className="btn-icon"
+                      onClick={() => handleSalvarRequisito(req)}
+                      disabled={!isAuditMode || upsertRequisito.isPending}
+                      title="Salvar pontuação"
+                    >
+                      💾
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── COMPONENTE: Gerenciamento de Dimensões ───────────────────
 function DimensionCRUD({ table, pk, field, label, parentField, parentPkField, parentTable, parentLabel }) {
+  const showError = useUIStore(s => s.showError)
   const { isAuditMode } = useAuthStore()
   const { data, isLoading, insert, update, remove } = useTable(table)
   const { data: parents } = useTable(parentTable || 'Bases') 
@@ -168,7 +828,7 @@ function DimensionCRUD({ table, pk, field, label, parentField, parentPkField, pa
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form[field] || (parentField && !form[parentField])) return toast.error('Preencha tudo.')
+    if (!form[field] || (parentField && !form[parentField])) return showError('Campos Obrigatórios', `Informe o nome do/a ${label}${parentField ? ` e o/a ${parentLabel}` : ''}.`)
     if (editingId) {
       await update.mutateAsync({ id: editingId, data: form })
       toast.success(`${label} atualizado!`)
@@ -229,6 +889,101 @@ function DimensionCRUD({ table, pk, field, label, parentField, parentPkField, pa
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function DiagnosticoConfig() {
+  const showError = useUIStore(s => s.showError)
+  const [checking, setChecking] = useState(false)
+  const [results, setResults] = useState([])
+
+  async function runChecks() {
+    setChecking(true)
+    const res = []
+    try {
+      // Check 1: Coluna 'tipo' em desafios_catalogo
+      try {
+        await db.getDesafiosCatalogo('Soul+')
+        res.push({ id: 1, label: 'Coluna "tipo" em desafios_catalogo', status: 'ok', msg: 'Coluna presente e funcional.' })
+      } catch (e) {
+        if (e.message.includes('column "tipo"')) {
+          res.push({ 
+            id: 1, label: 'Coluna "tipo" em desafios_catalogo', status: 'err', 
+            msg: 'Coluna ausente. Necessário para separar Soul+ de Teen.',
+            fix: "ALTER TABLE desafios_catalogo ADD COLUMN tipo TEXT DEFAULT 'G148 Teen';"
+          })
+        } else {
+          res.push({ id: 1, label: 'Coluna "tipo" em desafios_catalogo', status: 'err', msg: 'Erro ao verificar: ' + e.message })
+        }
+      }
+
+      // Check 2: Tabelas de Notas
+      try {
+        await db.getAll('Notas_Teen')
+        res.push({ id: 2, label: 'Tabela Notas_Teen', status: 'ok', msg: 'Tabela acessível.' })
+      } catch (e) {
+        res.push({ id: 2, label: 'Tabela Notas_Teen', status: 'err', msg: 'Falha ao acessar: ' + e.message })
+      }
+
+      try {
+        await db.getAll('Notas_Soul')
+        res.push({ id: 3, label: 'Tabela Notas_Soul', status: 'ok', msg: 'Tabela acessível.' })
+      } catch (e) {
+        res.push({ id: 3, label: 'Tabela Notas_Soul', status: 'err', msg: 'Falha ao acessar: ' + e.message })
+      }
+
+    } catch (e) {
+      showError('Erro no Diagnóstico', e.message)
+    } finally {
+      setChecking(false)
+      setResults(res)
+    }
+  }
+
+  return (
+    <div className="card section">
+      <div className="card-header">
+        <div className="card-title">🛡️ Diagnóstico do Sistema</div>
+        <button className="btn btn-primary" onClick={runChecks} disabled={checking}>
+          {checking ? '⏳ Analisando...' : '🔍 Executar Análise'}
+        </button>
+      </div>
+      <div className="card-body">
+        <p style={{ fontSize: 13, opacity: 0.7, marginBottom: 20 }}>
+          Esta ferramenta verifica a integridade do banco de dados e identifica colunas ou tabelas ausentes que podem causar erros no portal.
+        </p>
+
+        {results.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {results.map(r => (
+              <div key={r.id} className={`status-bar ${r.status}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 700 }}>
+                  <span>{r.status === 'ok' ? '✅' : '❌'}</span>
+                  <span>{r.label}</span>
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>{r.msg}</div>
+                {r.fix && (
+                  <div style={{ 
+                    marginTop: 8, padding: 12, background: 'rgba(0,0,0,0.2)', 
+                    borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)',
+                    fontFamily: 'monospace', fontSize: 11
+                  }}>
+                    <div style={{ marginBottom: 4, fontWeight: 700, color: 'var(--warn)' }}>SQL PARA CORREÇÃO:</div>
+                    {r.fix}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!checking && results.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '40px 0', opacity: 0.5 }}>
+            Clique no botão acima para iniciar a verificação.
+          </div>
+        )}
       </div>
     </div>
   )

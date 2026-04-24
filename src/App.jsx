@@ -5,12 +5,44 @@ import Dashboard from './pages/Dashboard'
 import Bases from './pages/Bases'
 import Membros from './pages/Membros'
 import Notas from './pages/Notas'
-import NotasSoul from './pages/NotasSoul'
-import Pontuacoes from './pages/Pontuacoes'
+import Desafios from './pages/Desafios'
+import Ranking from './pages/Ranking'
 import Relatorios from './pages/Relatorios'
 import Provas from './pages/Provas'
+import Departamentos from './pages/Departamentos'
 import AdminConfig from './pages/AdminConfig'
 import AdminLogin from './pages/AdminLogin'
+
+import { useUIStore } from './store/uiStore'
+
+// Modal de Erro Global (Premium)
+function GlobalErrorModal() {
+  const { error, clearError } = useUIStore()
+  if (!error) return null
+
+  return (
+    <div className="error-modal-backdrop" onClick={clearError}>
+      <div className="error-modal" onClick={e => e.stopPropagation()}>
+        <div className="error-modal-header">
+          <div className="error-icon-container">⚠️</div>
+          <h2 className="error-modal-title">{error.title}</h2>
+        </div>
+        <div className="error-modal-message">
+          {error.message}
+        </div>
+        {error.technicalInfo && (
+          <div className="error-technical">
+            <strong>Informação técnica:</strong><br/>
+            {error.technicalInfo}
+          </div>
+        )}
+        <div className="error-modal-footer">
+          <button className="error-btn-primary" onClick={clearError}>Entendido</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // Guard para rotas admin
 function AdminRoute({ children }) {
@@ -21,29 +53,50 @@ function AdminRoute({ children }) {
 
 export default function App() {
   return (
-    <Routes>
-      {/* Rota pública de login admin */}
-      <Route path="/admin/login" element={<AdminLogin />} />
+    <>
+      <GlobalErrorModal />
+      <Routes>
+        {/* Rota pública de login admin */}
+        <Route path="/admin/login" element={<AdminLogin />} />
 
-      {/* Todas as outras rotas usam o layout com sidebar */}
-      <Route element={<AppLayout />}>
-        {/* Rotas PÚBLICAS — qualquer pessoa com o link acessa */}
-        <Route index element={<Dashboard />} />
-        <Route path="bases" element={<Bases />} />
-        <Route path="membros" element={<Membros />} />
-        <Route path="notas" element={<Notas />} />
-        <Route path="notas-soul" element={<NotasSoul />} />
-        <Route path="pontuacoes" element={<Pontuacoes />} />
-        <Route path="relatorios" element={<Relatorios />} />
+        {/* Todas as outras rotas usam o layout com sidebar */}
+        <Route element={<AppLayout />}>
+          {/* Rota inicial */}
+          <Route index element={<Dashboard />} />
 
-        {/* Rotas ADMIN — requerem autenticação */}
-        <Route path="admin/config" element={
-          <AdminRoute><AdminConfig /></AdminRoute>
-        } />
-      </Route>
+          {/* Rota DINÂMICAS por TIPO (teen ou soul) */}
+          <Route path=":type">
+            <Route path="bases" element={<Bases />} />
+            <Route path="membros" element={<Membros />} />
+            <Route path="notas" element={<Notas />} />
+            <Route path="desafios" element={<Desafios />} />
+            <Route path="ranking" element={<Ranking />} />
+          </Route>
 
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+          {/* Mantém rotas legadas ou específicas sem prefixo para compatibilidade imediata */}
+          <Route path="bases" element={<Bases />} />
+          <Route path="membros" element={<Membros />} />
+          <Route path="notas" element={<Notas />} />
+          <Route path="notas-soul" element={<Navigate to="/soul/notas" replace />} />
+          <Route path="desafios" element={<Desafios />} />
+          <Route path="ranking" element={<Ranking />} />
+          <Route path="relatorios" element={<Relatorios />} />
+
+          {/* Rotas ADMIN — requerem autenticação */}
+          <Route path="admin/departamentos" element={
+            <AdminRoute><Departamentos /></AdminRoute>
+          } />
+          <Route path="admin/config" element={
+            <AdminRoute><AdminConfig /></AdminRoute>
+          } />
+          <Route path="admin/config/:min" element={
+            <AdminRoute><AdminConfig /></AdminRoute>
+          } />
+        </Route>
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   )
 }

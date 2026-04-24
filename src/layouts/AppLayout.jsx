@@ -3,35 +3,47 @@ import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { supabase } from '../api/supabase'
 
-const NAV_PUBLIC = [
-  { to: '/', icon: '🏠', label: 'Dashboard', end: true },
-  { to: '/bases', icon: '⛪', label: 'Bases' },
-  { to: '/membros', icon: '👥', label: 'Membros' },
-  { to: '/notas', icon: '📋', label: 'Notas Teen' },
-  { to: '/notas-soul', icon: '📋', label: 'Notas Soul+' },
-// { to: '/pontuacoes', icon: '🏆', label: 'Pontuações' },
-  { to: '/relatorios', icon: '📊', label: 'Relatórios' },
+const NAV_SOUL = [
+  { to: '/soul/bases',    icon: '⛪', label: 'Bases' },
+  { to: '/soul/membros',  icon: '👥', label: 'Membros' },
+  { to: '/soul/notas',    icon: '📋', label: 'Notas Soul+' },
+  { to: '/soul/desafios', icon: '🏅', label: 'Desafios' },
+  { to: '/soul/ranking',  icon: '🏆', label: 'Ranking' },
+]
+
+const NAV_TEEN = [
+  { to: '/teen/bases',    icon: '⛪', label: 'Bases' },
+  { to: '/teen/membros',  icon: '👥', label: 'Membros' },
+  { to: '/teen/notas',    icon: '📋', label: 'Notas Teen' },
+  { to: '/teen/desafios', icon: '🏅', label: 'Desafios' },
+  { to: '/teen/ranking',  icon: '🏆', label: 'Ranking' },
 ]
 
 const NAV_ADMIN = [
-  { to: '/admin/config', icon: '⚙️', label: 'Painel Admin' },
+  { to: '/relatorios',    icon: '📊', label: 'Relatórios Geral' },
+  { to: '/admin/departamentos', icon: '🧭', label: 'Departamentos' },
+  { to: '/admin/config', icon: '⚙️', label: 'Configurações Gerais' },
 ]
 
-// Páginas que ativam o tema Soul+
-const SOUL_ROUTES = ['/notas-soul']
-
-// Título de cada rota
+// Título de cada rota (com suporte a dinâmico)
 const PAGE_TITLES = {
   '/': { icon: '🏠', title: 'Dashboard' },
-  '/bases': { icon: '⛪', title: 'Cadastro de Bases' },
-  '/membros': { icon: '👥', title: 'Cadastro de Membros' },
-  '/notas': { icon: '📋', title: 'Notas BEP Teen' },
-  '/notas-soul': { icon: '📋', title: 'Notas Provinha Soul+' },
-  '/pontuacoes': { icon: '🏆', title: 'Pontuações' },
   '/relatorios': { icon: '📊', title: 'Relatório Geral' },
-  '/admin/provas': { icon: '📝', title: 'Gerenciar Provas' },
+  '/admin/departamentos': { icon: '🧭', title: 'Departamentos do Discipulado' },
   '/admin/config': { icon: '⚙️', title: 'Configurações Admin' },
-  '/admin/login': { icon: '🔒', title: 'Login Admin' },
+}
+
+function getPageInfo(pathname) {
+  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname]
+  
+  const parts = pathname.split('/').filter(Boolean)
+  if (parts.length >= 2) {
+    const type = parts[0] === 'soul' ? 'Soul+' : 'G148 Teen'
+    const page = parts[1].charAt(0).toUpperCase() + parts[1].slice(1)
+    const icons = { bases: '⛪', membros: '👥', notas: '📋', desafios: '🏅', ranking: '🏆' }
+    return { icon: icons[parts[1]] || '📄', title: `${page} — ${type}` }
+  }
+  return { icon: '📄', title: 'G148 Teen' }
 }
 
 export default function AppLayout() {
@@ -60,12 +72,19 @@ export default function AppLayout() {
   // Fecha sidebar no mobile ao navegar
   useEffect(() => { setIsMobileOpen(false) }, [location.pathname])
 
-  // Testa conexão Supabase ao montar
+  // Testa conexão Supabase ao montar (tenta ambos os schemas: normalizado e legacy)
   useEffect(() => {
     supabase
       .from('bases')
       .select('id', { count: 'exact', head: true })
-      .then(({ error }) => setConnOk(!error))
+      .then(({ error }) => {
+        if (!error) { setConnOk(true); return }
+        // Fallback para schema legado com PascalCase
+        return supabase
+          .from('Bases')
+          .select('id_base', { count: 'exact', head: true })
+          .then(({ error: e2 }) => setConnOk(!e2))
+      })
       .catch(() => setConnOk(false))
   }, [])
 
@@ -80,10 +99,14 @@ export default function AppLayout() {
     if (!ok) alert('Senha incorreta!')
   }
 
-  // Tema Soul+: ativo na rota /notas-soul
-  // Páginas de Bases e Membros ativam via seletor de tipo — tratado dentro de cada page
-  const isSoul = SOUL_ROUTES.some(r => location.pathname.startsWith(r))
-  const pageInfo = PAGE_TITLES[location.pathname] || { icon: '📄', title: 'Portal ANC' }
+  // Tema Soul+: ativo em rotas Soul+ canônicas e fallbacks legados
+  const pathname = location.pathname.toLowerCase()
+  const isSoul =
+    pathname === '/soul' ||
+    pathname.startsWith('/soul/') ||
+    pathname.startsWith('/admin/config/soul') ||
+    pathname === '/notas-soul'
+  const pageInfo = getPageInfo(location.pathname)
 
   return (
     <div className="layout">
@@ -101,19 +124,46 @@ export default function AppLayout() {
         <div className="sidebar-logo">
           <div className="logo-icon">⛪</div>
           <div className="logo-text">
-            <div className="logo-title">Portal ANC</div>
-            <div className="logo-sub">G148 · Soul+</div>
+            <div className="logo-title" style={{ fontSize: 20, letterSpacing: '1px' }}>PORTAL ANC</div>
+            <div className="logo-sub" style={{ fontWeight: 800, opacity: 0.9 }}>SOUL+ · G148 TEEN</div>
           </div>
         </div>
 
-        {/* Nav pública */}
+        {/* Home */}
         <nav className="nav-section">
-          <div className="nav-section-label">Menu</div>
-          {NAV_PUBLIC.map(item => (
+          <NavLink to="/" end className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">🏠</span>
+            <span className="nav-label">Dashboard</span>
+          </NavLink>
+        </nav>
+
+        {/* Seção SOUL+ */}
+        <nav className="nav-section" style={{ background: '#FFE082', borderBottom: '1px solid rgba(62,32,0,.15)' }}>
+          <div className="nav-section-label" style={{ color: '#3E2000', fontWeight: 800 }}>MINISTÉRIO SOUL+</div>
+          {NAV_SOUL.map(item => (
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.end}
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+              style={({ isActive }) => ({
+                color: '#3E2000',
+                background: isActive ? 'rgba(62,32,0,.1)' : 'transparent',
+                fontWeight: isActive ? 800 : 500,
+              })}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        {/* Seção TEEN */}
+        <nav className="nav-section" style={{ borderLeft: '4px solid var(--c1)', background: 'rgba(124,58,237,.03)' }}>
+          <div className="nav-section-label" style={{ color: 'var(--c1)' }}>Ministério G148 Teen</div>
+          {NAV_TEEN.map(item => (
+            <NavLink
+              key={item.to}
+              to={item.to}
               className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
             >
               <span className="nav-icon">{item.icon}</span>
@@ -126,6 +176,8 @@ export default function AppLayout() {
         {(isAdmin || isAuditMode) && (
           <nav className="nav-section">
             <div className="nav-section-label">Administração</div>
+            
+            {/* Relatórios e Config Gerais */}
             {NAV_ADMIN.map(item => (
               <NavLink
                 key={item.to}
@@ -136,10 +188,40 @@ export default function AppLayout() {
                 <span className="nav-label">{item.label}</span>
               </NavLink>
             ))}
+
+            {/* Configs específicas por ministério no bloco admin */}
+            <hr style={{ opacity: 0.1, margin: '8px 16px' }} />
+            
+            <NavLink
+              to="/admin/config/soul"
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+              style={({ isActive }) => ({
+                color: isActive ? 'var(--soul-brown)' : '#FFD54F',
+                background: isActive ? 'var(--soul-amber)' : 'transparent',
+                fontWeight: isActive ? 800 : 500,
+              })}
+            >
+              <span className="nav-icon">☀️</span>
+              <span className="nav-label">Config. Soul+</span>
+            </NavLink>
+
+            <NavLink
+              to="/admin/config/teen"
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+              style={({ isActive }) => ({
+                color: isActive ? '#fff' : 'var(--c1-l)',
+                background: isActive ? 'var(--c1)' : 'transparent',
+                fontWeight: isActive ? 800 : 500,
+              })}
+            >
+              <span className="nav-icon">⚡</span>
+              <span className="nav-label">Config. Teen</span>
+            </NavLink>
+
             <button
               className="nav-item"
               onClick={logout}
-              style={{ color: 'var(--bad)' }}
+              style={{ color: 'var(--bad)', marginTop: 8 }}
             >
               <span className="nav-icon">🚪</span>
               <span className="nav-label">Sair do Admin</span>

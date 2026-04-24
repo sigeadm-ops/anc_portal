@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { useIgrejas } from '../hooks/useIgrejas'
@@ -14,27 +15,25 @@ const EMPTY = {
 }
 
 export default function Bases() {
+  const { type } = useParams()
+  const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
+  
   const { data, isLoading, insert, update, remove } = useTable('Bases', 'BASES')
   const geo = useIgrejas()
 
-  const [form, setForm] = useState(EMPTY)
+  const [form, setForm] = useState({ ...EMPTY, Tipo: currentTipo })
   const [editingId, setEditingId] = useState(null)
   const [search, setSearch] = useState('')
-  const [tipoFiltro, setTipoFiltro] = useState('')
+
+  // Atualiza o tipo no formulário se o parâmetro da URL mudar
+  useEffect(() => {
+    if (!editingId) {
+      setForm(f => ({ ...f, Tipo: currentTipo }))
+    }
+  }, [currentTipo, editingId])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  // ── Tema Soul+ aplicado dinamicamente no #main ─────────────────
-  useEffect(() => {
-    const main = document.getElementById('main')
-    if (!main) return
-    if (form.Tipo === 'Soul+') {
-      main.classList.add('theme-soul')
-    } else {
-      main.classList.remove('theme-soul')
-    }
-    return () => main.classList.remove('theme-soul')
-  }, [form.Tipo])
 
   // Cascata por IDs
   const distritosOpts = geo.getDistritos(form.id_regiao)
@@ -50,13 +49,13 @@ export default function Bases() {
   }, [duplicateBaseGroups])
 
   const isCurrentNameDuplicated = useMemo(() => {
-    const key = `${String(form.Tipo || '').trim()}::${normalizeBaseName(form.Base)}`
+    const key = `${String(currentTipo || '').trim()}::${normalizeBaseName(form.Base)}`
     if (!key) return false
     return (data || []).some((base) => {
       if (editingId && base.id_base === editingId) return false
       return `${String(base.Tipo || '').trim()}::${normalizeBaseName(base.Base)}` === key
     })
-  }, [data, form.Tipo, form.Base, editingId])
+  }, [data, currentTipo, form.Base, editingId])
 
   function handleRegiaoChange(v) {
     set('id_regiao', v); set('id_distritos', ''); set('id_igrejas', '')
@@ -72,7 +71,7 @@ export default function Bases() {
   }
 
   function cancelEdit() {
-    setForm(EMPTY)
+    setForm({ ...EMPTY, Tipo: currentTipo })
     setEditingId(null)
   }
 
@@ -110,7 +109,7 @@ export default function Bases() {
     } else {
       await insert.mutateAsync(payload)
       toast.success('Base cadastrada!')
-      setForm(EMPTY)
+      setForm({ ...EMPTY, Tipo: currentTipo })
     }
   }
 
@@ -121,15 +120,22 @@ export default function Bases() {
     if (editingId === id) cancelEdit()
   }
 
-  const filtered = data
-    .filter(b =>
-      (!tipoFiltro || b.Tipo === tipoFiltro) &&
-      (!search ||
+  const filtered = (data || [])
+    .filter(b => {
+      const bTipo = (b.Tipo || '').toLowerCase()
+      const cTipo = currentTipo.toLowerCase()
+      
+      // Filtro flexível para Teen: aceita se contiver 'teen' ou se for vazio (legado)
+      const matchesTipo = cTipo.includes('teen') 
+        ? (bTipo.includes('teen') || !bTipo) 
+        : bTipo.includes('soul')
+
+      return matchesTipo && (!search ||
         [b.Base, b.Igreja_Nome, b.Igrejas, b.Distrito_Nome, b.Distritos, b.Regiao_Nome, b.Regiao, b.Coord]
           .join(' ')
           .toLowerCase()
           .includes(search.toLowerCase()))
-    )
+    })
     .sort((a, b) => (a.Base || '').localeCompare(b.Base || ''))
 
   const inconsistentGeoBases = useMemo(() => {
@@ -180,13 +186,9 @@ export default function Bases() {
           )}
 
           <div className="form-grid">
-            <div className="form-group">
-              <label>Tipo *</label>
-              <select value={form.Tipo} onChange={e => set('Tipo', e.target.value)} required>
-                <option value="">Selecione…</option>
-                <option value="G148 Teen">G148 Teen</option>
-                <option value="Soul+">Soul+</option>
-              </select>
+            <div className="form-group" style={{ opacity: 0.7 }}>
+              <label>Tipo</label>
+              <input value={currentTipo} readOnly disabled style={{ background: type === 'soul' ? 'rgba(62,32,0,0.05)' : 'rgba(255,255,255,0.05)', fontWeight: 800 }} />
             </div>
             <div className="form-group">
               <label>Nome da Base *</label>
@@ -253,7 +255,7 @@ export default function Bases() {
           <hr className="divider" />
           <div className="section-label">Responsáveis</div>
 
-          <div className="form-grid">
+          <div className="form-grid-3">
             <div className="form-group">
               <label>Coordenador</label>
               <input value={form.Coord} onChange={e => set('Coord', e.target.value)} placeholder="Nome" />
@@ -266,6 +268,9 @@ export default function Bases() {
               <label>E-mail Coord.</label>
               <input type="email" value={form.Coord_Email} onChange={e => set('Coord_Email', e.target.value)} placeholder="email@..." />
             </div>
+          </div>
+
+          <div className="form-grid-3">
             <div className="form-group">
               <label>Professor</label>
               <input value={form.Prof} onChange={e => set('Prof', e.target.value)} placeholder="Nome" />
@@ -280,11 +285,26 @@ export default function Bases() {
             </div>
           </div>
 
+          <div className="form-grid-3">
+            <div className="form-group">
+              <label>Mídia</label>
+              <input value={form.Midia} onChange={e => set('Midia', e.target.value)} placeholder="Nome" />
+            </div>
+            <div className="form-group">
+              <label>Fone Mídia</label>
+              <input value={form.Midia_Fone} onChange={e => set('Midia_Fone', e.target.value)} placeholder="(00) 00000-0000" />
+            </div>
+            <div className="form-group">
+              <label>E-mail Mídia</label>
+              <input type="email" value={form.Midia_Email} onChange={e => set('Midia_Email', e.target.value)} placeholder="email@..." />
+            </div>
+          </div>
+
           <div style={{ display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' }}>
             <button
               type="button"
               className="btn btn-outline"
-              onClick={() => { setForm(EMPTY); setEditingId(null) }}
+              onClick={cancelEdit}
             >
               Limpar
             </button>
@@ -311,11 +331,6 @@ export default function Bases() {
             </span>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <select value={tipoFiltro} onChange={e => setTipoFiltro(e.target.value)} style={{ width: 140 }}>
-              <option value="">Todos os tipos</option>
-              <option value="G148 Teen">G148 Teen</option>
-              <option value="Soul+">Soul+</option>
-            </select>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
