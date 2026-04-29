@@ -37,6 +37,172 @@ const PK_MAP = {
   Igrejas:    'id_igrejas',
 }
 
+const ORDER_CONFIG = {
+  Bases:      { columns: ['created_at', 'updated_at'], ascending: false },
+  Membros:    { columns: ['created_at', 'updated_at', 'DataCad', 'data_cad'], ascending: false },
+  Notas_Teen: { columns: ['data', 'Data', 'created_at'], ascending: false },
+  Notas_Soul: { columns: ['data', 'Data', 'created_at'], ascending: false },
+  Provas:     { columns: ['data', 'Data', 'created_at'], ascending: false },
+  Regiao:     { columns: ['Regiao', 'regiao', 'nome'], ascending: true },
+  Distritos:  { columns: ['Distritos', 'distrito', 'nome'], ascending: true },
+  Igrejas:    { columns: ['Igrejas', 'igreja', 'nome'], ascending: true },
+}
+
+const SELECT_PAGE_SIZE = 1000
+
+function getPkCandidates(table) {
+  if (table === 'Provas') return ['id', 'id_provas']
+  return [PK_MAP[table] || 'id']
+}
+
+function getOrderConfig(table) {
+  return ORDER_CONFIG[table] || { columns: ['created_at', 'CreatedAt', 'CreateAt'], ascending: false }
+}
+
+function isMissingColumnError(error, column) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes(String(column || '').toLowerCase()) && (msg.includes('does not exist') || msg.includes('could not find') || msg.includes('column'))
+}
+
+async function fetchAllRows(queryFactory) {
+  const rows = []
+  let from = 0
+
+  for (;;) {
+    const to = from + SELECT_PAGE_SIZE - 1
+    const resp = await queryFactory(from, to)
+    if (resp.error) return { data: null, error: resp.error }
+
+    const page = resp.data ?? []
+    rows.push(...page)
+
+    if (page.length < SELECT_PAGE_SIZE) {
+      return { data: rows, error: null }
+    }
+
+    from += SELECT_PAGE_SIZE
+  }
+}
+
+function normalizeDateOnly(value) {
+  return value ? String(value).slice(0, 10) : ''
+}
+
+function normalizeText(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+}
+
+function matchesBaseRow(row, base_id, base_nome) {
+  const targetId = String(base_id ?? '').trim()
+  const targetName = normalizeText(base_nome)
+
+  const rowIds = [row?.id_base, row?.base_id, row?.id_base_geo]
+    .map((v) => String(v ?? '').trim())
+    .filter(Boolean)
+
+  if (targetId && rowIds.includes(targetId)) return true
+
+  const rowNames = [row?.Base, row?.base, row?.nome_base]
+    .map((v) => normalizeText(v))
+    .filter(Boolean)
+
+  if (!targetName || rowNames.length === 0) return false
+
+  return rowNames.some((name) =>
+    name === targetName || name.includes(targetName) || targetName.includes(name)
+  )
+}
+
+async function fetchLegacyNotasFallback({ legacyTableCandidates, normalizeTable, base_id, base_nome, primeiro_sabado, ultimo_sabado }) {
+  for (const tableName of legacyTableCandidates) {
+    const { data, error } = await supabase
+      .from(tableName)
+      .select('*')
+
+    if (error) continue
+
+    const rows = (data ?? [])
+      .map((row) => normalizeReadRow(normalizeTable, row))
+      .filter((row) => {
+        if (!matchesBaseRow(row, base_id, base_nome)) return false
+
+        const rowDate = normalizeDateOnly(row?.data ?? row?.Data)
+        if (!rowDate) return false
+        if (primeiro_sabado && rowDate < primeiro_sabado) return false
+        if (ultimo_sabado && rowDate > ultimo_sabado) return false
+        return true
+      })
+
+    if (rows.length > 0) return rows
+  }
+
+  return []
+}
+
+function hasAnsweredValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== ''
+}
+
+function isSimLike(value) {
+  const raw = String(value ?? '').trim().toLowerCase()
+  return raw === 'sim' || raw === 's' || raw === 'true' || raw === '1' || raw === 'yes' || raw === 'x'
+}
+
+function normalizeTipoMinisterio(value) {
+  const raw = String(value ?? '').trim().toLowerCase()
+  if (!raw) return ''
+  if (raw.includes('soul')) return 'soul'
+  if (raw.includes('teen')) return 'teen'
+  return raw
+}
+
+function isCategoriaAutoAdministrativa(value) {
+  const raw = String(value ?? '').trim().toLowerCase()
+  return raw === 'admin' || raw === 'da'
+}
+
+function notaPreencheCartao(nota) {
+  return [
+    nota?.comunhao ?? nota?.Comunhao,
+    nota?.verso ?? nota?.Verso,
+    nota?.discipulado ?? nota?.Discipulado,
+    nota?.trezentos_treinamento ?? nota?.TrezentosTrainamento,
+    nota?.trezentos_estudo ?? nota?.TrezentosEstudo,
+  ].every(hasAnsweredValue)
+}
+
+function findDesafiosAdminSemanais(catalogo) {
+  const semanaisAdmin = (catalogo ?? []).filter(
+    (desafio) => isCategoriaAutoAdministrativa(desafio.categoria) &&
+    (desafio.periodicidade === 'semanal' || desafio.rastreamento === 'semanal')
+  )
+
+  return {
+    cartao: semanaisAdmin.filter((desafio) => /cart[aã]o/i.test(desafio.nome ?? '')),
+    comunhao: semanaisAdmin.filter((desafio) => /comunh[aã]o/i.test(desafio.nome ?? '')),
+    assiduidade: semanaisAdmin.filter((desafio) => /assiduidade|portal/i.test(desafio.nome ?? '')),
+  }
+}
+
+function sortDesafios(list) {
+  return [...(list ?? [])].sort((a, b) => {
+    const aDate = a.data_ocorrencia || '9999-12-31'
+    const bDate = b.data_ocorrencia || '9999-12-31'
+    const cmpDate = String(aDate).localeCompare(String(bDate))
+    if (cmpDate !== 0) return cmpDate
+
+    const aOrdem = Number(a.ordem ?? 99)
+    const bOrdem = Number(b.ordem ?? 99)
+    if (aOrdem !== bOrdem) return aOrdem - bOrdem
+
+    return String(a.nome ?? '').localeCompare(String(b.nome ?? ''))
+  })
+}
+
 function filterNotasByTable(table, rows) {
   if (!Array.isArray(rows)) return []
   if (table !== 'Notas_Teen' && table !== 'Notas_Soul') return rows
@@ -97,6 +263,7 @@ function normalizeReadRow(table, row) {
   if (table === 'Provas') {
     return {
       ...row,
+      id: row.id ?? row.id_provas,
       id_provas: row.id_provas ?? row.id,
       Provas: row.Provas ?? row.provas ?? row.nome,
       Data: row.Data ?? row.data,
@@ -354,24 +521,40 @@ export const db = {
   // ── SELECT ──────────────────────────────────────────────────
   async getAll(table) {
     const source = VIEW_MAP[table] || table
-    
-    // Tenta buscar com ordenação padrão primeiro
-    // Tenta colunas de ordenação comuns. Se todas falharem, busca sem ordem (evita erros 400).
-    const possibleCols = ['created_at', 'CreatedAt', 'CreateAt']
+
+    // Usa colunas prováveis por entidade para evitar erros 400 em schemas legados.
+    const { columns, ascending } = getOrderConfig(table)
     let data = null
     let error = null
 
-    for (const col of possibleCols) {
-      const resp = await supabase.from(source).select('*').order(col, { ascending: false })
+    for (const col of columns) {
+      const resp = await fetchAllRows((from, to) =>
+        supabase
+          .from(source)
+          .select('*')
+          .order(col, { ascending })
+          .range(from, to)
+      )
+
       if (!resp.error) {
         data = resp.data
         break
       }
+
       error = resp.error
+      if (!isMissingColumnError(resp.error, col)) {
+        break
+      }
     }
 
     if (!data) {
-      const resp = await supabase.from(source).select('*')
+      const resp = await fetchAllRows((from, to) =>
+        supabase
+          .from(source)
+          .select('*')
+          .range(from, to)
+      )
+
       if (resp.error) throw resp.error
       const normalized = filterNotasByTable(table, resp.data ?? []).map((row) => normalizeReadRow(table, row))
       if (table === 'Bases') {
@@ -398,13 +581,31 @@ export const db = {
 
   async getById(table, id) {
     const source = VIEW_MAP[table] || table
-    const pk = PK_MAP[table] || 'id'
-    const { data, error } = await supabase
-      .from(source)
-      .select('*')
-      .eq(pk, id)
-      .single()
-    if (error) throw error
+    const candidates = getPkCandidates(table)
+
+    let data = null
+    let error = null
+
+    for (const pk of candidates) {
+      const resp = await supabase
+        .from(source)
+        .select('*')
+        .eq(pk, id)
+        .single()
+
+      if (!resp.error) {
+        data = resp.data
+        break
+      }
+
+      error = resp.error
+      const msg = String(resp.error.message || '').toLowerCase()
+      const missingPkColumn = msg.includes(pk.toLowerCase()) && (msg.includes('does not exist') || msg.includes('column'))
+      if (!missingPkColumn) break
+    }
+
+    if (!data) throw error
+
     const normalized = normalizeReadRow(table, data)
     if (table === 'Bases') {
       const [enriched] = await enrichBasesGeo([normalized], {
@@ -436,28 +637,84 @@ export const db = {
   // ── UPDATE ──────────────────────────────────────────────────
   async update(table, id, record) {
     const target = TABLE_MAP[table] || table
-    const pk = PK_MAP[table] || 'id'
     const payload = mapWriteRecord(table, record)
-    const { data: updated, error } = await supabase
-      .from(target)
-      .update(payload)
-      .eq(pk, id)
-      .select()
-      .single()
-    if (error) throw error
+    const candidates = getPkCandidates(table)
+
+    let updated = null
+    let error = null
+
+    for (const pk of candidates) {
+      const resp = await supabase
+        .from(target)
+        .update(payload)
+        .eq(pk, id)
+        .select()
+        .single()
+
+      if (!resp.error) {
+        updated = resp.data
+        break
+      }
+
+      error = resp.error
+      const msg = String(resp.error.message || '').toLowerCase()
+      const missingPkColumn = msg.includes(pk.toLowerCase()) && (msg.includes('does not exist') || msg.includes('column'))
+      if (!missingPkColumn) break
+    }
+
+    if (!updated) throw error
     return normalizeReadRow(table, updated)
   },
 
   // ── DELETE ──────────────────────────────────────────────────
   async delete(table, id) {
     const target = TABLE_MAP[table] || table
-    const pk = PK_MAP[table] || 'id'
-    const { error } = await supabase
-      .from(target)
-      .delete()
-      .eq(pk, id)
-    if (error) throw error
+    const candidates = getPkCandidates(table)
+
+    let lastError = null
+    for (const pk of candidates) {
+      const resp = await supabase
+        .from(target)
+        .delete()
+        .eq(pk, id)
+
+      if (!resp.error) {
+        return true
+      }
+
+      lastError = resp.error
+      const msg = String(resp.error.message || '').toLowerCase()
+      const missingPkColumn = msg.includes(pk.toLowerCase()) && (msg.includes('does not exist') || msg.includes('column'))
+      if (!missingPkColumn) break
+    }
+
+    if (lastError) throw lastError
     return true
+  },
+
+  // ── NOTAS: atualiza uma linha, com retry para colunas ausentes ──
+  async updateNota(tableName, id, fields) {
+    let payload = { ...fields }
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const { data, error } = await supabase
+        .from(tableName)
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single()
+
+      if (!error) return data
+
+      const msg = String(error.message || '')
+      const m1 = msg.match(/Could not find the '([^']+)' column/i)
+      const m2 = msg.match(/column\s+"?([A-Za-z0-9_]+)"?\s+does not exist/i)
+      const badCol = m1?.[1] || m2?.[1]
+
+      if (!badCol) throw error
+      const { [badCol]: _drop, ...rest } = payload
+      payload = rest
+    }
+    throw new Error('Falha ao atualizar nota após sanitizar colunas inválidas.')
   },
 
   // ── NOTAS: insere todas as linhas de um formulário ──────────
@@ -487,6 +744,98 @@ export const db = {
     }
 
     throw new Error('Falha ao salvar notas após sanitizar colunas inválidas.')
+  },
+
+  async getMembrosCom300Concluido(base_id, tipo = 'G148 Teen', data_referencia = null) {
+    if (!base_id) return {}
+
+    const source = String(tipo).toLowerCase().includes('soul') ? 'vw_notas_soul' : 'vw_notas_teen'
+    let query = supabase
+      .from(source)
+      .select('*')
+      .eq('id_base', base_id)
+
+    if (data_referencia) {
+      query = query.lte('data', String(data_referencia).slice(0, 10))
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+
+    const statusByMembro = {}
+    ;(data ?? []).forEach((row) => {
+      const membroId = String(row?.id_membros ?? '').trim()
+      if (!membroId) return
+
+      if (!statusByMembro[membroId]) {
+        statusByMembro[membroId] = { treinamento: false, estudo: false }
+      }
+
+      if (isSimLike(row?.trezentos_treinamento ?? row?.TrezentosTrainamento)) {
+        statusByMembro[membroId].treinamento = true
+      }
+      if (isSimLike(row?.trezentos_estudo ?? row?.TrezentosEstudo)) {
+        statusByMembro[membroId].estudo = true
+      }
+    })
+
+    return statusByMembro
+  },
+
+  async syncDesafiosAdministrativosFromNotas({ base_id, tipo, data_sabado, rows, responsavel, catalogo }) {
+    const sabado = normalizeDateOnly(data_sabado)
+    if (!base_id || !tipo || !sabado || !Array.isArray(rows)) {
+      return { assiduidade: false, cartao: false }
+    }
+
+    const desafiosCatalogo = Array.isArray(catalogo) && catalogo.length > 0
+      ? catalogo
+      : await this.getDesafiosCatalogo(tipo)
+
+    const desafiosAdmin = findDesafiosAdminSemanais(desafiosCatalogo)
+    const assiduidadeOk = rows.length > 0
+    const cartaoOk = rows.length > 0 && rows.every(notaPreencheCartao)
+    const comunhaoOk = rows.length > 0 && rows.every((nota) => isSimLike(nota?.comunhao ?? nota?.Comunhao))
+    const tasks = []
+
+    desafiosAdmin.assiduidade.forEach((desafio) => {
+      tasks.push(this.upsertRegistro({
+        base_id,
+        desafio_id: desafio.id,
+        data_sabado: sabado,
+        realizado: assiduidadeOk,
+        responsavel: assiduidadeOk ? (responsavel ?? null) : null,
+        obs: assiduidadeOk ? 'Automático via lançamento de notas' : null,
+      }))
+    })
+
+    desafiosAdmin.cartao.forEach((desafio) => {
+      tasks.push(this.upsertRegistro({
+        base_id,
+        desafio_id: desafio.id,
+        data_sabado: sabado,
+        realizado: cartaoOk,
+        responsavel: cartaoOk ? (responsavel ?? null) : null,
+        obs: cartaoOk ? 'Automático via preenchimento das notas' : null,
+      }))
+    })
+
+    desafiosAdmin.comunhao.forEach((desafio) => {
+      tasks.push(this.upsertRegistro({
+        base_id,
+        desafio_id: desafio.id,
+        data_sabado: sabado,
+        realizado: comunhaoOk,
+        responsavel: comunhaoOk ? (responsavel ?? null) : null,
+        obs: comunhaoOk ? 'Automático via campo Comunhão nas notas' : null,
+      }))
+    })
+
+    if (tasks.length > 0) {
+      await Promise.all(tasks)
+    }
+
+    return { assiduidade: assiduidadeOk, cartao: cartaoOk, comunhao: comunhaoOk }
   },
 
   // ── TABELAS DIMENSÃO ────────────────────────────────────────
@@ -532,13 +881,13 @@ export const db = {
     // Se o tipo for informado, filtra no JS para evitar erro caso a coluna 'tipo' não exista no banco
     if (tipo) {
       const isTeen = tipo.toLowerCase().includes('teen')
-      return data.filter(d => {
+      return sortDesafios(data.filter(d => {
         const itemTipo = (d.tipo || 'G148 Teen').toLowerCase()
         if (isTeen) return itemTipo.includes('teen')
         return itemTipo.includes('soul')
-      })
+      }))
     }
-    return data
+    return sortDesafios(data)
   },
 
   async getDesafiosCatalogoAll() {
@@ -547,10 +896,10 @@ export const db = {
       .select('*')
       .order('ordem', { ascending: true })
     if (error) throw error
-    return data ?? []
+    return sortDesafios(data ?? [])
   },
 
-  async upsertDesafioCatalogo({ id, codigo, nome, descricao, categoria, rastreamento, periodicidade, pontos_total, ordem, ativo, mes_ref, tipo }) {
+  async upsertDesafioCatalogo({ id, codigo, nome, descricao, categoria, rastreamento, periodicidade, pontos_total, ordem, ativo, mes_ref, tipo, data_ocorrencia }) {
     const payload = {
       codigo,
       nome,
@@ -563,15 +912,27 @@ export const db = {
       ativo: ativo !== false,
       mes_ref: mes_ref ? Number(mes_ref) : null,
       tipo: tipo || 'G148 Teen',
+      data_ocorrencia: data_ocorrencia || null,
     }
-    if (id) {
-      const { data, error } = await supabase.from('desafios_catalogo').update(payload).eq('id', id).select().single()
-      if (error) throw error
-      return data
+
+    const save = async (withDate = true) => {
+      const row = withDate ? payload : { ...payload, data_ocorrencia: undefined }
+      if (id) {
+        return supabase.from('desafios_catalogo').update(row).eq('id', id).select().single()
+      }
+      return supabase.from('desafios_catalogo').insert(row).select().single()
     }
-    const { data, error } = await supabase.from('desafios_catalogo').insert(payload).select().single()
-    if (error) throw error
-    return data
+
+    let resp = await save(true)
+    const missingDateCol = resp.error && String(resp.error.message || '').toLowerCase().includes('data_ocorrencia')
+
+    // Compatibilidade para bancos que ainda não aplicaram a migration da coluna data_ocorrencia
+    if (missingDateCol) {
+      resp = await save(false)
+    }
+
+    if (resp.error) throw resp.error
+    return resp.data
   },
 
   async deleteDesafioCatalogo(id) {
@@ -726,9 +1087,9 @@ export const db = {
   async getAllNotasTeenPorAno(ano) {
     const { data, error } = await supabase
       .from('vw_notas_teen')
-      .select('id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, nota, Nota')
-      .gte('Data', `${ano}-01-01`)
-      .lte('Data', `${ano}-12-31`)
+      .select('id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota')
+      .gte('data', `${ano}-01-01`)
+      .lte('data', `${ano}-12-31`)
     if (error) throw error
     return (data ?? []).filter(r => {
       const n = Number(r.nota ?? r.Nota)
@@ -739,9 +1100,9 @@ export const db = {
   async getAllNotasSoulPorAno(ano) {
     const { data, error } = await supabase
       .from('vw_notas_soul')
-      .select('id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, nota, Nota')
-      .gte('Data', `${ano}-01-01`)
-      .lte('Data', `${ano}-12-31`)
+      .select('id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota')
+      .gte('data', `${ano}-01-01`)
+      .lte('data', `${ano}-12-31`)
     if (error) throw error
     return (data ?? []).filter(r => {
       const n = Number(r.nota ?? r.Nota)
@@ -749,26 +1110,82 @@ export const db = {
     })
   },
 
-  async getNotasTeenPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado) {
-    const { data, error } = await supabase
+  async getNotasTeenPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado, base_nome = null) {
+    const COLS = 'id, id_membros, nome_aluno, data, nota, comunhao, verso, discipulado, trezentos_treinamento, trezentos_estudo, id_base, base'
+
+    let query = supabase
       .from('vw_notas_teen')
-      .select('id, id_membros, Membros, nome_aluno, Data, Nota, nota')
-      .eq('id_base', base_id)
-      .gte('Data', primeiro_sabado)
-      .lte('Data', ultimo_sabado)
+      .select(COLS)
+      .gte('data', primeiro_sabado)
+      .lte('data', ultimo_sabado)
+
+    if (base_id) query = query.eq('id_base', base_id)
+
+    const { data, error } = await query
     if (error) throw error
-    return data ?? []
+
+    const rows = data ?? []
+    if (base_id && base_nome && rows.length === 0) {
+      const { data: data2, error: error2 } = await supabase
+        .from('vw_notas_teen')
+        .select(COLS)
+        .gte('data', primeiro_sabado)
+        .lte('data', ultimo_sabado)
+      if (!error2) {
+        const fallbackRows = (data2 ?? []).filter((row) => matchesBaseRow(row, base_id, base_nome))
+        if (fallbackRows.length > 0) return fallbackRows
+      }
+
+      return fetchLegacyNotasFallback({
+        legacyTableCandidates: ['Notas_Teen', 'notas_teen'],
+        normalizeTable: 'Notas_Teen',
+        base_id,
+        base_nome,
+        primeiro_sabado,
+        ultimo_sabado,
+      })
+    }
+
+    return rows
   },
 
-  async getNotasSoulPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado) {
-    const { data, error } = await supabase
+  async getNotasSoulPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado, base_nome = null) {
+    const COLS = 'id, id_membros, nome_aluno, data, nota, comunhao, verso, discipulado, trezentos_treinamento, trezentos_estudo, id_base, base'
+
+    let query = supabase
       .from('vw_notas_soul')
-      .select('id, id_membros, Membros, nome_aluno, Data, Nota, nota')
-      .eq('id_base', base_id)
-      .gte('Data', primeiro_sabado)
-      .lte('Data', ultimo_sabado)
+      .select(COLS)
+      .gte('data', primeiro_sabado)
+      .lte('data', ultimo_sabado)
+
+    if (base_id) query = query.eq('id_base', base_id)
+
+    const { data, error } = await query
     if (error) throw error
-    return data ?? []
+
+    const rows = data ?? []
+    if (base_id && base_nome && rows.length === 0) {
+      const { data: data2, error: error2 } = await supabase
+        .from('vw_notas_soul')
+        .select(COLS)
+        .gte('data', primeiro_sabado)
+        .lte('data', ultimo_sabado)
+      if (!error2) {
+        const fallbackRows = (data2 ?? []).filter((row) => matchesBaseRow(row, base_id, base_nome))
+        if (fallbackRows.length > 0) return fallbackRows
+      }
+
+      return fetchLegacyNotasFallback({
+        legacyTableCandidates: ['Notas_Soul', 'notas_soul'],
+        normalizeTable: 'Notas_Soul',
+        base_id,
+        base_nome,
+        primeiro_sabado,
+        ultimo_sabado,
+      })
+    }
+
+    return rows
   },
 
   // ── DISCÍPULOS TEEN ─────────────────────────────────────────
@@ -865,23 +1282,37 @@ export const db = {
   },
 
   async getDiscipulosCartoes(base_id, ano, tipo = 'G148 Teen') {
-    let query = supabase
+    const { data, error } = await supabase
       .from('discipulos_cartoes')
       .select('*')
       .eq('base_id', base_id)
-      .eq('ano', ano)
-
-    if (tipo) query = query.eq('tipo', tipo)
-
-    const { data, error } = await query
-      .order('ordem', { ascending: true })
-      .order('criado_em', { ascending: true })
 
     if (error) throw error
-    return data ?? []
+
+    const targetTipo = normalizeTipoMinisterio(tipo)
+    const targetAno = Number(ano)
+
+    return (data ?? [])
+      .filter((card) => {
+        const cardAno = Number(card?.ano)
+        if (Number.isFinite(targetAno) && Number.isFinite(cardAno) && cardAno !== targetAno) return false
+
+        if (targetTipo) {
+          const cardTipo = normalizeTipoMinisterio(card?.tipo)
+          if (cardTipo && cardTipo !== targetTipo) return false
+        }
+
+        return true
+      })
+      .sort((a, b) => {
+        const ordA = Number(a?.ordem ?? 999)
+        const ordB = Number(b?.ordem ?? 999)
+        if (ordA !== ordB) return ordA - ordB
+        return String(a?.criado_em ?? '').localeCompare(String(b?.criado_em ?? ''))
+      })
   },
 
-  async createDiscipulosCartao({ membro_id, base_id, ano, tipo = 'G148 Teen', nome, departamento }) {
+  async createDiscipulosCartao({ membro_id, base_id, ano, tipo = 'G148 Teen', nome, departamento, descricao, data_inicio, data_fim, observacoes_professor }) {
     const { count, error: countError } = await supabase
       .from('discipulos_cartoes')
       .select('*', { count: 'exact', head: true })
@@ -901,6 +1332,10 @@ export const db = {
       ordem,
       nome: nome?.trim() || `Cartão ${ordem}`,
       departamento: departamento?.trim() || null,
+      descricao: descricao?.trim() || null,
+      data_inicio: data_inicio || null,
+      data_fim: data_fim || null,
+      observacoes_professor: observacoes_professor?.trim() || null,
     }
 
     const { data, error } = await supabase
@@ -912,10 +1347,14 @@ export const db = {
     return data
   },
 
-  async updateDiscipulosCartao({ id, nome, departamento }) {
+  async updateDiscipulosCartao({ id, nome, departamento, descricao, data_inicio, data_fim, observacoes_professor }) {
     const payload = {
       nome: nome?.trim() || 'Cartão',
       departamento: departamento?.trim() || null,
+      descricao: descricao?.trim() || null,
+      data_inicio: data_inicio || null,
+      data_fim: data_fim || null,
+      observacoes_professor: observacoes_professor?.trim() || null,
       atualizado_em: new Date().toISOString(),
     }
     const { data, error } = await supabase
@@ -926,6 +1365,14 @@ export const db = {
       .single()
     if (error) throw error
     return data
+  },
+
+  async deleteDiscipulosCartao(id) {
+    const { error } = await supabase
+      .from('discipulos_cartoes')
+      .delete()
+      .eq('id', id)
+    if (error) throw error
   },
 
   async getDiscipulosRegistros(base_id, ano, tipo = null) {
@@ -1077,6 +1524,56 @@ export const db = {
     const { error } = await supabase.from('batismos_registros').delete().eq('id', id)
     if (error) throw error
     return true
+  },
+
+  // Sincroniza automaticamente o desafio anual "Batismo" com o count real de batismos.
+  // Chamado após cada upsert/delete de batismo.
+  async syncBatismoDesafio(base_id, ano, tipo) {
+    const [batismos, catalogo] = await Promise.all([
+      this.getBatismos(base_id, ano),
+      this.getDesafiosCatalogo(tipo),
+    ])
+    const count = batismos.length
+    const batismoDesafio = catalogo.find(
+      d => d.periodicidade === 'anual' && /batismo/i.test(d.nome ?? '')
+    )
+    if (!batismoDesafio) return
+
+    // Preserva data e obs que o usuário possa ter registrado manualmente
+    let q = supabase
+      .from('desafios_marcos')
+      .select('data_realizacao, obs')
+      .eq('base_id', base_id)
+      .eq('desafio_id', batismoDesafio.id)
+      .eq('ano', ano)
+      .is('trimestre', null)
+      .is('mes', null)
+    const { data: existing } = await q.maybeSingle()
+
+    // Quando não há batismos registrados, limpa tudo (data_realizacao + obs)
+    if (count === 0) {
+      return this.upsertMarco({
+        base_id,
+        desafio_id: batismoDesafio.id,
+        ano,
+        trimestre: null,
+        mes: null,
+        realizado: false,
+        data_realizacao: null,
+        obs: null,
+      })
+    }
+
+    return this.upsertMarco({
+      base_id,
+      desafio_id: batismoDesafio.id,
+      ano,
+      trimestre: null,
+      mes: null,
+      realizado: true,
+      data_realizacao: existing?.data_realizacao ?? null,
+      obs: `${count} batismo(s) registrado(s) em ${ano}.`,
+    })
   },
 
   // ── BIBLIOTECA DE IMAGENS ────────────────────────────────────

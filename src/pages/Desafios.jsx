@@ -59,7 +59,7 @@ const NOMES_MESES_FULL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
 const MAIN_TABS = [
   { id: 'desafios',    icon: '🏅', label: 'Desafios' },
   { id: 'comparativo', icon: '📊', label: 'Comparativo' },
-  { id: 'disciplos',  icon: '📖', label: 'Discípulos' },
+  { id: 'discipulos',  icon: '📖', label: 'Discípulos' },
   { id: 'batismos',   icon: '🕊️', label: 'Batismos' },
   { id: 'fotos',      icon: '🖼️', label: 'Fotos' },
 ]
@@ -78,6 +78,11 @@ const CAT_LABEL = {
   estudo: 'Estudo',
   midia:  'Mídia',
   missao: 'Missão',
+}
+
+function isCategoriaAutoAdministrativa(value) {
+  const raw = String(value ?? '').trim().toLowerCase()
+  return raw === 'admin' || raw === 'da'
 }
 
 // ── Componente principal ─────────────────────────────────────────
@@ -162,8 +167,9 @@ export default function Desafios() {
   // ── Trava de trimestre encerrado ─────────────────────────────
   const isPastTrimestre = Boolean(cfgTrim && cfgTrim.ultimo_sabado < hojeStr)
   const mesAtual = new Date().getMonth() + 1
-  const isTeenTrim1AbrilOverride = currentTipo === 'G148 Teen' && trimestre === 1 && mesAtual === 4
-  const isLocked = isPastTrimestre && !isAuditMode && !isAdmin && !isTeenTrim1AbrilOverride
+  const isTeenTrim1AbrilMaioOverride = currentTipo === 'G148 Teen' && trimestre === 1 && (mesAtual === 4 || mesAtual === 5)
+  const isSoulTrim1AbrilMaioOverride  = currentTipo === 'Soul+' && trimestre === 1 && (mesAtual === 4 || mesAtual === 5)
+  const isLocked = isPastTrimestre && !isAuditMode && !isAdmin && !isTeenTrim1AbrilMaioOverride && !isSoulTrim1AbrilMaioOverride
 
   // ── Dados da base ────────────────────────────────────────────
   const { data: registros = [] } = useQuery({
@@ -171,6 +177,68 @@ export default function Desafios() {
     queryFn:  () => db.getDesafiosRegistros(baseId, cfgTrim.primeiro_sabado, cfgTrim.ultimo_sabado),
     enabled:  Boolean(baseId && cfgTrim),
   })
+
+  // Notas do trimestre — carregadas sempre (não só ao abrir o Comparativo)
+  const { data: notasTrim = [] } = useQuery({
+    queryKey: ['notas_trimestre_comparativo', currentTipo, baseId, selectedBase?.Base ?? '', cfgTrim?.primeiro_sabado, cfgTrim?.ultimo_sabado],
+    queryFn: () => {
+      const isSoul = currentTipo.toLowerCase().includes('soul')
+      return isSoul
+        ? db.getNotasSoulPorBaseETrimestre(baseId, cfgTrim.primeiro_sabado, cfgTrim.ultimo_sabado, selectedBase?.Base ?? '')
+        : db.getNotasTeenPorBaseETrimestre(baseId, cfgTrim.primeiro_sabado, cfgTrim.ultimo_sabado, selectedBase?.Base ?? '')
+    },
+    enabled: Boolean(baseId && cfgTrim),
+    staleTime: 2 * 60 * 1000,
+  })
+
+  // Auto-sync desafios administrativos sempre que notas forem carregadas
+  useEffect(() => {
+    if (!baseId || !cfgTrim || !catalogo?.length) return
+
+    let cancelled = false
+
+    async function syncAdminDesafios() {
+      const notasByDate = {}
+      notasTrim.forEach(n => {
+        const date = String(n.data || n.Data || '').slice(0, 10)
+        if (!date) return
+        if (!notasByDate[date]) notasByDate[date] = []
+        notasByDate[date].push(n)
+      })
+
+      const tasks = []
+      sabados.forEach(sab => {
+        const notasDia = notasByDate[sab] ?? []
+        tasks.push(
+          db.syncDesafiosAdministrativosFromNotas({
+            base_id: baseId,
+            tipo: currentTipo,
+            data_sabado: sab,
+            rows: notasDia,
+            responsavel: null,
+            catalogo,
+          })
+        )
+      })
+
+      if (tasks.length > 0) {
+        const results = await Promise.allSettled(tasks)
+        const syncFailures = results.filter((result) => result.status === 'rejected')
+
+        if (syncFailures.length > 0) {
+          console.warn('[Desafios] Falhas ao sincronizar desafios administrativos a partir das notas.', syncFailures)
+        }
+
+        if (!cancelled) {
+          qc.invalidateQueries({ queryKey: ['desafios_registros', baseId, cfgTrim.primeiro_sabado, cfgTrim.ultimo_sabado] })
+          qc.invalidateQueries({ queryKey: ['desafios_registros_ano', baseId, ano] })
+        }
+      }
+    }
+
+    syncAdminDesafios()
+    return () => { cancelled = true }
+  }, [baseId, currentTipo, catalogo, notasTrim, sabados, cfgTrim, qc, ano])
 
   // Registros do ano inteiro para o acumulado
   const { data: registrosAno = [] } = useQuery({
@@ -261,16 +329,33 @@ export default function Desafios() {
     return getMarco(desafio.id, null)?.realizado ? Number(desafio.pontos_total) : 0
   }
 
+  function sortMensais(list) {
+    return [...list].sort((a, b) => {
+      const mesCmp = Number(a.mes_ref ?? 99) - Number(b.mes_ref ?? 99)
+      if (mesCmp !== 0) return mesCmp
+
+      const dataA = a.data_ocorrencia || '9999-12-31'
+      const dataB = b.data_ocorrencia || '9999-12-31'
+      const dataCmp = dataA.localeCompare(dataB)
+      if (dataCmp !== 0) return dataCmp
+
+      const ordemCmp = Number(a.ordem ?? 99) - Number(b.ordem ?? 99)
+      if (ordemCmp !== 0) return ordemCmp
+
+      return String(a.nome ?? '').localeCompare(String(b.nome ?? ''), 'pt-BR')
+    })
+  }
+
   // ── Grupos do catálogo ───────────────────────────────────────
   const desafiosPontuaisTrim = catalogo.filter(d => d.rastreamento === 'pontual' && d.periodicidade === 'trimestral')
   // Mensais: apenas os do trimestre atual (derivado de mes_ref)
-  const desafiosMensais = catalogo
-    .filter(d => d.periodicidade === 'mensal' && d.mes_ref && Math.ceil(d.mes_ref / 3) === trimestre)
-    .sort((a, b) => a.mes_ref - b.mes_ref)
+  const desafiosMensais = sortMensais(
+    catalogo.filter(d => d.periodicidade === 'mensal' && d.mes_ref && Math.ceil(d.mes_ref / 3) === trimestre)
+  )
   // Todos os mensais do ano (para acumulado)
-  const desafiosMensaisAno = catalogo
-    .filter(d => d.periodicidade === 'mensal' && d.mes_ref)
-    .sort((a, b) => a.mes_ref - b.mes_ref)
+  const desafiosMensaisAno = sortMensais(
+    catalogo.filter(d => d.periodicidade === 'mensal' && d.mes_ref)
+  )
   const desafiosSemanais = catalogo.filter(d => d.rastreamento === 'semanal' && d.periodicidade === 'trimestral')
   const desafiosAnuais   = catalogo.filter(d => d.periodicidade === 'anual')
 
@@ -435,19 +520,21 @@ export default function Desafios() {
       )}
 
       {/* ── Tab: Discípulos ── */}
-      {mainTab === 'disciplos' && (
+      {mainTab === 'discipulos' && (
         <DiscipulosTab baseId={baseId} ano={ano} tipo={currentTipo} isAdmin={isAdmin} isAuditMode={isAuditMode} qc={qc} isSoul={type === 'soul'} />
       )}
 
       {/* ── Tab: Batismos ── */}
       {mainTab === 'batismos' && (
-        <BatismosTab baseId={baseId} ano={ano} isAdmin={isAdmin} isAuditMode={isAuditMode} />
+        <BatismosTab baseId={baseId} ano={ano} tipo={currentTipo} isAdmin={isAdmin} isAuditMode={isAuditMode} isSoul={type === 'soul'} />
       )}
 
       {/* ── Tab: Comparativo ── */}
       {mainTab === 'comparativo' && (
         <ComparativoTab
           baseId={baseId}
+          baseNome={selectedBase?.Base ?? selectedBase?.nome ?? ''}
+          tipo={currentTipo}
           cfgTrim={cfgTrim}
           sabados={sabados}
           catalogo={catalogo}
@@ -519,7 +606,9 @@ export default function Desafios() {
           {desafiosPorCategoria.map(([cat, desafios]) => {
             const semanaisCat   = desafios.filter(d => d.rastreamento === 'semanal' && d.periodicidade === 'trimestral')
             const pontuaisTCat  = desafios.filter(d => d.rastreamento === 'pontual' && d.periodicidade === 'trimestral')
-            const mensaisCat    = desafios.filter(d => d.periodicidade === 'mensal' && d.mes_ref && Math.ceil(d.mes_ref / 3) === trimestre)
+            const mensaisCat    = sortMensais(
+              desafios.filter(d => d.periodicidade === 'mensal' && d.mes_ref && Math.ceil(d.mes_ref / 3) === trimestre)
+            )
             const anuaisCat     = desafios.filter(d => d.periodicidade === 'anual')
             const tiposCount    = [semanaisCat, pontuaisTCat, mensaisCat, anuaisCat].filter(g => g.length > 0).length
             const cor           = CATEGORIA_COR[cat] ?? 'var(--muted)'
@@ -531,7 +620,9 @@ export default function Desafios() {
                     {CAT_LABEL[cat] ?? cat}
                   </div>
                   <span style={{ fontSize: 12, opacity: 0.6 }}>
-                    {isLocked ? '🔒 Somente leitura' : 'salvo automaticamente ao clicar'}
+                    {isLocked ? '🔒 Somente leitura'
+                     : cat === 'admin' ? '⚡ preenchido automaticamente via notas'
+                     : 'salvo automaticamente ao clicar'}
                   </span>
                 </div>
 
@@ -555,9 +646,11 @@ export default function Desafios() {
                         </thead>
                         <tbody>
                           {semanaisCat.map(d => {
-                            const real   = realizadosNoTrim(d.id)
-                            const pts    = Number(ptsSemanal(d))
-                            const pctVal = pct(real, numSabados)
+                            const real      = realizadosNoTrim(d.id)
+                            const pts       = Number(ptsSemanal(d))
+                            const pctVal    = pct(real, numSabados)
+                            const isAutoOnly = isCategoriaAutoAdministrativa(d.categoria) &&
+                              (d.periodicidade === 'semanal' || d.rastreamento === 'semanal')
                             return (
                               <tr key={d.id}>
                                 <td><span style={{ fontWeight: 500 }}>{d.nome}</span></td>
@@ -569,7 +662,7 @@ export default function Desafios() {
                                   const checked   = registrado(d.id, s)
                                   const cellKey   = `${d.id}-${s}`
                                   const isSaving  = savingCells.has(cellKey)
-                                  const bloqueado = isFuturo || isLocked
+                                  const bloqueado = isFuturo || isLocked || isAutoOnly
                                   return (
                                     <td key={s} style={{ textAlign: 'center', padding: 2 }}>
                                       <button
@@ -583,13 +676,14 @@ export default function Desafios() {
                                           background: checked ? 'rgba(56,242,163,.18)' : 'transparent',
                                           color: checked ? 'var(--good)' : (type === 'soul' ? 'var(--soul-brown)' : 'var(--muted)'),
                                           cursor: bloqueado ? 'not-allowed' : 'pointer',
-                                          opacity: bloqueado ? 0.3 : 1,
+                                          opacity: isAutoOnly ? (checked ? 1 : 0.35) : (bloqueado ? 0.3 : 1),
                                           fontSize: isSaving ? 10 : 16,
                                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                                           transition: 'all .15s',
                                         }}
                                         title={
-                                          isLocked ? 'Trimestre encerrado'
+                                          isAutoOnly ? 'Preenchido automaticamente via lançamento de notas'
+                                          : isLocked ? 'Trimestre encerrado'
                                           : isFuturo ? 'Sábado futuro'
                                           : checked ? 'Realizado — clique para desmarcar'
                                           : 'Não realizado — clique para marcar'
@@ -769,8 +863,8 @@ function TrMensal({ desafio, marco, mesLabel, bloqueado, isLocked, isFuture, onT
           <div>
             <div style={{ fontWeight: 500 }}>{desafio.nome}</div>
             {desafio.descricao && (
-              <div style={{ fontSize: 11, opacity: 0.5, maxWidth: 320 }} title={desafio.descricao}>
-                {desafio.descricao.slice(0, 70)}{desafio.descricao.length > 70 ? '…' : ''}
+              <div style={{ fontSize: 11, opacity: 0.5, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', lineHeight: 1.4 }} title={desafio.descricao}>
+                {desafio.descricao}
               </div>
             )}
           </div>
@@ -840,8 +934,8 @@ function TrPontualMensal({ desafio, marcos, ano, canEdit, onToggle }) {
           <div>
             <div style={{ fontWeight: 500 }}>{desafio.nome}</div>
             {desafio.descricao && (
-              <div style={{ fontSize: 11, opacity: 0.55, maxWidth: 260 }}>
-                {desafio.descricao.slice(0, 60)}{desafio.descricao.length > 60 ? '…' : ''}
+              <div style={{ fontSize: 11, opacity: 0.55, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', lineHeight: 1.4 }}>
+                {desafio.descricao}
               </div>
             )}
           </div>
@@ -934,8 +1028,8 @@ function TrPontual({ desafio, marco, isLocked, onSalvar }) {
           <div>
             <div style={{ fontWeight: 500 }}>{desafio.nome}</div>
             {desafio.descricao && (
-              <div style={{ fontSize: 11, opacity: 0.55, maxWidth: 320 }} title={desafio.descricao}>
-                {desafio.descricao.slice(0, 80)}{desafio.descricao.length > 80 ? '…' : ''}
+              <div style={{ fontSize: 11, opacity: 0.55, maxWidth: '100%', whiteSpace: 'normal', overflowWrap: 'anywhere', wordBreak: 'break-word', lineHeight: 1.4 }} title={desafio.descricao}>
+                {desafio.descricao}
               </div>
             )}
           </div>
@@ -1056,6 +1150,8 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
 
   const [expanded, setExpanded] = useState({})
   const [metaCartao, setMetaCartao] = useState({})
+  // Rascunhos locais (não salvos no DB): { [membroId]: [{_draftId, nome, departamento, data_inicio, data_fim, observacoes_professor}] }
+  const [draftCartoes, setDraftCartoes] = useState({})
 
   const DEPARTAMENTOS_SUGERIDOS = useMemo(() => {
     if (departamentosCatalogo.length > 0) return departamentosCatalogo.map(d => d.nome)
@@ -1071,6 +1167,10 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
       next[c.id] = {
         nome: c.nome ?? `Cartão ${c.ordem ?? 1}`,
         departamento: c.departamento ?? '',
+        descricao: c.descricao ?? '',
+        data_inicio: c.data_inicio ?? '',
+        data_fim: c.data_fim ?? '',
+        observacoes_professor: c.observacoes_professor ?? '',
       }
     })
     setMetaCartao(next)
@@ -1095,6 +1195,56 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     return map
   }, [registros])
 
+  const hasAnyDrafts = useMemo(
+    () => Object.values(draftCartoes).some(arr => arr.length > 0),
+    [draftCartoes]
+  )
+
+  // Avisa navegador ao fechar/recarregar aba com rascunhos não salvos
+  useEffect(() => {
+    if (!hasAnyDrafts) return
+    const handler = (e) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [hasAnyDrafts])
+
+  function updateDraft(membroId, draftId, field, value) {
+    setDraftCartoes(prev => ({
+      ...prev,
+      [membroId]: (prev[membroId] || []).map(d =>
+        d._draftId === draftId ? { ...d, [field]: value } : d
+      ),
+    }))
+  }
+
+  function handleAddCartao(membroId, savedCount, draftCount) {
+    const ordem = savedCount + draftCount + 1
+    setDraftCartoes(prev => ({
+      ...prev,
+      [membroId]: [...(prev[membroId] || []), {
+        _draftId: crypto.randomUUID(),
+        nome: `Cartão ${ordem}`,
+        departamento: '',
+        descricao: '',
+        data_inicio: '',
+        data_fim: '',
+        observacoes_professor: '',
+      }],
+    }))
+  }
+
+  function handleToggleMembro(membroId) {
+    const isOpen = expanded[membroId]
+    const drafts = draftCartoes[membroId] || []
+    if (isOpen && drafts.length > 0) {
+      if (!window.confirm(`Este aluno tem ${drafts.length} cartão(ões) não salvo(s). Ao fechar, os rascunhos serão descartados. Deseja continuar?`)) {
+        return
+      }
+      setDraftCartoes(prev => ({ ...prev, [membroId]: [] }))
+    }
+    setExpanded(e => ({ ...e, [membroId]: !e[membroId] }))
+  }
+
   function isRegLocked(reg) {
     return Boolean(reg?.realizado && reg?.data_realizacao && reg?.responsavel)
   }
@@ -1118,22 +1268,49 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     onError: (e) => toast.error('Erro: ' + e.message),
   })
 
-  const addCartao = useMutation({
-    mutationFn: (payload) => db.createDiscipulosCartao(payload),
-    onSuccess: () => {
+  // Salva rascunho: cria no DB pela primeira vez
+  const saveDraftCartao = useMutation({
+    mutationFn: ({ membroId, draft }) => db.createDiscipulosCartao({
+      membro_id: membroId,
+      base_id: baseId,
+      ano,
+      tipo,
+      nome: draft.nome,
+      departamento: draft.departamento,
+      descricao: draft.descricao || null,
+      data_inicio: draft.data_inicio,
+      data_fim: draft.data_fim || null,
+      observacoes_professor: draft.observacoes_professor || null,
+    }),
+    onSuccess: (_, { membroId, draft }) => {
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes', baseId, ano, tipo] })
-      toast.success('Novo cartão adicionado!')
+      setDraftCartoes(prev => ({
+        ...prev,
+        [membroId]: (prev[membroId] || []).filter(d => d._draftId !== draft._draftId),
+      }))
+      toast.success('Cartão salvo com sucesso!')
     },
-    onError: (e) => toast.error('Erro ao adicionar cartão: ' + e.message),
+    onError: (e) => toast.error('Erro ao salvar cartão: ' + e.message),
   })
 
+  // Atualiza cartão já existente no DB
   const saveMetaCartao = useMutation({
     mutationFn: (payload) => db.updateDiscipulosCartao(payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes', baseId, ano, tipo] })
-      toast.success('Cartão atualizado!')
+      toast.success('Cartão atualizado com sucesso!')
     },
-    onError: (e) => toast.error('Erro ao salvar cartão: ' + e.message),
+    onError: (e) => toast.error('Erro ao atualizar cartão: ' + e.message),
+  })
+
+  const deleteCartao = useMutation({
+    mutationFn: (id) => db.deleteDiscipulosCartao(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['discipulos_cartoes', baseId, ano, tipo] })
+      qc.invalidateQueries({ queryKey: ['discipulos_registros', baseId, ano, tipo] })
+      toast.success('Cartão excluído.')
+    },
+    onError: (e) => toast.error('Erro ao excluir cartão: ' + e.message),
   })
 
   if (!baseId) return (
@@ -1161,6 +1338,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
         const membroId = membro.id_membros ?? membro.id
         const isOpen = Boolean(expanded[membroId])
         const cards = cartoesByMembro[membroId] ?? []
+        const drafts = draftCartoes[membroId] ?? []
         const pts = cards.reduce((sum, c) => sum + pontosDoCartao(c.id), 0)
         const completos = cards.reduce((sum, c) => sum + completosDoCartao(c.id), 0)
         const totalReqs = catalogo.length
@@ -1169,7 +1347,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
         return (
           <div key={membroId} className="card" style={{ marginBottom: 10 }}>
               <button
-                onClick={() => setExpanded(e => ({ ...e, [membroId]: !e[membroId] }))}
+                onClick={() => handleToggleMembro(membroId)}
                 style={{
                   width: '100%', padding: '14px 16px', background: 'none', border: 'none',
                   cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, color: 'inherit',
@@ -1186,6 +1364,11 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                 <div style={{ fontWeight: 600 }}>{membro.Membros ?? membro.nome}</div>
                 <div style={{ fontSize: 11, opacity: isSoul ? 0.75 : 0.6, fontWeight: isSoul ? 600 : 400 }}>
                   {cards.length} cartão(ões)
+                  {drafts.length > 0 && (
+                    <span style={{ color: 'var(--warn)', marginLeft: 4, fontWeight: 700 }}>
+                      · {drafts.length} rascunho(s) não salvo(s)
+                    </span>
+                  )}
                   {maxReqMembro > 0 && <span> · {completos}/{maxReqMembro} requisitos</span>}
                   {pts > 0 && <span style={{ color: isSoul ? 'var(--soul-brown)' : 'var(--c2)', marginLeft: 6 }}>· {pts} pts</span>}
                 </div>
@@ -1209,18 +1392,17 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
             {isOpen && (
               <div style={{ borderTop: '1px solid ' + (isSoul ? 'rgba(62,32,0,.1)' : 'rgba(255,255,255,.08)'), padding: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>Cada cartão possui progresso e pontuação independentes.</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>Cada cartão possui progresso e pontuação independentes. Preencha departamento e data de início e salve para valer nas notas.</div>
                   <button
                     className="btn btn-primary"
-                    onClick={() => addCartao.mutate({ membro_id: membroId, base_id: baseId, ano, tipo })}
-                    disabled={addCartao.isPending}
-                    style={{ padding: '6px 12px', fontSize: 12 }}
+                    onClick={() => handleAddCartao(membroId, cards.length, drafts.length)}
+                    style={{ padding: '6px 12px', fontSize: 12, flexShrink: 0, marginLeft: 12 }}
                   >
-                    {addCartao.isPending ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '➕ Adicionar cartão'}
+                    ➕ Adicionar cartão
                   </button>
                 </div>
 
-                {cards.length === 0 && (
+                {cards.length === 0 && drafts.length === 0 && (
                   <div className="empty-state" style={{ padding: 12 }}>
                     <p style={{ margin: 0 }}>Nenhum cartão criado ainda para este aluno.</p>
                   </div>
@@ -1231,12 +1413,22 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                   const completosCard = completosDoCartao(card.id)
                   const pontosCard = pontosDoCartao(card.id)
                   const pctCard = totalReqs > 0 ? Math.round((completosCard / totalReqs) * 100) : 0
-                  const cardMeta = metaCartao[card.id] ?? { nome: card.nome ?? `Cartão ${idx + 1}`, departamento: card.departamento ?? '' }
+                  const cardMeta = metaCartao[card.id] ?? {
+                    nome: card.nome ?? `Cartão ${idx + 1}`,
+                    departamento: card.departamento ?? '',
+                    descricao: card.descricao ?? '',
+                    data_inicio: card.data_inicio ?? '',
+                    data_fim: card.data_fim ?? '',
+                    observacoes_professor: card.observacoes_professor ?? '',
+                  }
+                  const podeSalvarMeta = Boolean(cardMeta.departamento?.trim() && cardMeta.data_inicio)
+                  const podeEncerrar = completosCard === totalReqs || Boolean(cardMeta.observacoes_professor?.trim())
+                  const tentantoEncerrarSemPermissao = Boolean(cardMeta.data_fim && !podeEncerrar)
 
                   return (
                     <div key={card.id} className="card" style={{ marginBottom: 10 }}>
                       <div style={{ padding: 12, borderBottom: '1px solid ' + (isSoul ? 'rgba(62,32,0,.1)' : 'rgba(255,255,255,.08)') }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto auto', gap: 8 }}>
                           <input
                             value={cardMeta.nome}
                             onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, nome: e.target.value } }))}
@@ -1248,21 +1440,84 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                             list={`deps-${card.id}`}
                             placeholder="Departamento / discipulado"
                           />
+                          <input
+                            type="date"
+                            value={cardMeta.data_inicio}
+                            onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, data_inicio: e.target.value } }))}
+                            placeholder="Data de início"
+                          />
+                          <input
+                            type="date"
+                            value={cardMeta.data_fim}
+                            onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, data_fim: e.target.value } }))}
+                            placeholder="Data final"
+                            disabled={!podeEncerrar && !cardMeta.data_fim}
+                          />
                           <button
                             className="btn btn-secondary"
-                            onClick={() => saveMetaCartao.mutate({ id: card.id, nome: cardMeta.nome, departamento: cardMeta.departamento })}
+                            onClick={() => {
+                              if (!podeSalvarMeta) {
+                                toast.error('Preencha departamento e data de início para salvar o cartão.')
+                                return
+                              }
+                              if (tentantoEncerrarSemPermissao) {
+                                toast.error('A data final só pode ser usada após concluir todos os itens ou registrar observação do professor.')
+                                return
+                              }
+                              saveMetaCartao.mutate({
+                                id: card.id,
+                                nome: cardMeta.nome,
+                                departamento: cardMeta.departamento,
+                                descricao: cardMeta.descricao,
+                                data_inicio: cardMeta.data_inicio,
+                                data_fim: cardMeta.data_fim,
+                                observacoes_professor: cardMeta.observacoes_professor,
+                              })
+                            }}
                             disabled={saveMetaCartao.isPending}
                             style={{ padding: '6px 10px', fontSize: 12 }}
                           >
-                            Salvar cartão
+                            {saveMetaCartao.isPending ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Salvar cartão'}
+                          </button>
+                          <button
+                            className="btn-icon danger"
+                            title="Excluir cartão"
+                            disabled={deleteCartao.isPending}
+                            onClick={() => {
+                              if (!window.confirm(`Excluir "${card.nome ?? `Cartão ${idx + 1}`}"? Todos os registros deste cartão serão removidos e esta ação não pode ser desfeita.`)) return
+                              deleteCartao.mutate(card.id)
+                            }}
+                          >
+                            {deleteCartao.isPending ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🗑️'}
                           </button>
                           <datalist id={`deps-${card.id}`}>
                             {DEPARTAMENTOS_SUGERIDOS.map(dep => <option key={dep} value={dep} />)}
                           </datalist>
                         </div>
 
+                        <div style={{ marginTop: 8 }}>
+                          <input
+                            value={cardMeta.descricao}
+                            onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, descricao: e.target.value } }))}
+                            placeholder="Descrição (área de atuação, foco do discipulado…)"
+                            style={{ width: '100%' }}
+                          />
+                        </div>
+
+                        <div style={{ marginTop: 8 }}>
+                          <textarea
+                            value={cardMeta.observacoes_professor}
+                            onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, observacoes_professor: e.target.value } }))}
+                            placeholder="Observações do professor / motivo de encerramento antecipado"
+                            rows={2}
+                            style={{ width: '100%', resize: 'vertical' }}
+                          />
+                        </div>
+
                         <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7 }}>
                           {completosCard}/{totalReqs} requisitos · {pontosCard} pts · {pctCard}%
+                          {card.departamento && card.data_inicio && <span> · válido para discipulado nas notas</span>}
+                          {tentantoEncerrarSemPermissao && <span style={{ color: 'var(--warn)' }}> · data final exige conclusão ou observação</span>}
                         </div>
                       </div>
 
@@ -1297,6 +1552,96 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                             ))}
                           </tbody>
                         </table>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Cartões rascunho (não salvos no banco) */}
+                {drafts.map((draft, draftIdx) => {
+                  const podeSalvarDraft = Boolean(draft.departamento?.trim() && draft.data_inicio)
+                  const ordemVisual = cards.length + draftIdx + 1
+                  return (
+                    <div key={draft._draftId} className="card" style={{ marginBottom: 10, border: '2px dashed var(--warn)' }}>
+                      <div style={{ padding: '8px 12px 4px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,190,0,.06)', borderBottom: '1px solid rgba(255,190,0,.2)' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--warn)' }}>⚠️ Rascunho — não salvo</span>
+                        <span style={{ fontSize: 11, opacity: 0.65 }}>Preencha departamento e data de início para salvar.</span>
+                      </div>
+                      <div style={{ padding: 12 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto auto', gap: 8 }}>
+                          <input
+                            value={draft.nome}
+                            onChange={e => updateDraft(membroId, draft._draftId, 'nome', e.target.value)}
+                            placeholder={`Cartão ${ordemVisual}`}
+                          />
+                          <input
+                            value={draft.departamento}
+                            onChange={e => updateDraft(membroId, draft._draftId, 'departamento', e.target.value)}
+                            list={`deps-draft-${draft._draftId}`}
+                            placeholder="Departamento * (obrigatório)"
+                            style={{ borderColor: !draft.departamento?.trim() ? 'var(--warn)' : undefined }}
+                          />
+                          <input
+                            type="date"
+                            value={draft.data_inicio}
+                            onChange={e => updateDraft(membroId, draft._draftId, 'data_inicio', e.target.value)}
+                            style={{ borderColor: !draft.data_inicio ? 'var(--warn)' : undefined }}
+                          />
+                          <input
+                            type="date"
+                            value={draft.data_fim}
+                            onChange={e => updateDraft(membroId, draft._draftId, 'data_fim', e.target.value)}
+                            placeholder="Data final"
+                          />
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => {
+                              if (!podeSalvarDraft) {
+                                toast.error('Preencha departamento e data de início para salvar o cartão.')
+                                return
+                              }
+                              saveDraftCartao.mutate({ membroId, draft })
+                            }}
+                            disabled={saveDraftCartao.isPending}
+                            style={{ padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}
+                          >
+                            {saveDraftCartao.isPending ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '💾 Salvar'}
+                          </button>
+                          <button
+                            className="btn-icon danger"
+                            onClick={() => {
+                              setDraftCartoes(prev => ({
+                                ...prev,
+                                [membroId]: (prev[membroId] || []).filter(d => d._draftId !== draft._draftId),
+                              }))
+                              toast('Rascunho descartado.', { icon: '🗑️' })
+                            }}
+                            title="Descartar rascunho"
+                          >
+                            🗑️
+                          </button>
+                          <datalist id={`deps-draft-${draft._draftId}`}>
+                            {DEPARTAMENTOS_SUGERIDOS.map(dep => <option key={dep} value={dep} />)}
+                          </datalist>
+                        </div>
+                        <div style={{ marginTop: 8 }}>
+                          <input
+                            value={draft.descricao}
+                            onChange={e => updateDraft(membroId, draft._draftId, 'descricao', e.target.value)}
+                            placeholder="Descrição (área de atuação, foco do discipulado…)"
+                            style={{ width: '100%' }}
+                          />
+                        </div>
+
+                        <div style={{ marginTop: 8 }}>
+                          <textarea
+                            value={draft.observacoes_professor}
+                            onChange={e => updateDraft(membroId, draft._draftId, 'observacoes_professor', e.target.value)}
+                            placeholder="Observações do professor"
+                            rows={2}
+                            style={{ width: '100%', resize: 'vertical' }}
+                          />
+                        </div>
                       </div>
                     </div>
                   )
@@ -1407,7 +1752,7 @@ function DiscipuloReqRow({ req, reg, isAdmin, isAuditMode, onSave }) {
 }
 
 // ── BATISMOS TAB ──────────────────────────────────────────────────
-function BatismosTab({ baseId, ano, isAdmin, isAuditMode }) {
+function BatismosTab({ baseId, ano, tipo, isAdmin, isAuditMode, isSoul }) {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [editItem, setEditItem] = useState(null)
@@ -1420,6 +1765,17 @@ function BatismosTab({ baseId, ano, isAdmin, isAuditMode }) {
     queryFn: () => db.getBatismos(baseId, ano),
     enabled: Boolean(baseId),
   })
+
+  async function syncDesafioBatismo() {
+    if (!baseId || !ano || !tipo) return
+    try {
+      await db.syncBatismoDesafio(baseId, ano, tipo)
+      qc.invalidateQueries({ queryKey: ['desafios_marcos', baseId, ano] })
+      qc.invalidateQueries({ queryKey: ['desafios_registros_ano', baseId, ano] })
+    } catch {
+      // sync não-crítico: falha silenciosa
+    }
+  }
 
   const upsert = useMutation({
     mutationFn: async ({ id, nome, mes, obs, file }) => {
@@ -1435,6 +1791,7 @@ function BatismosTab({ baseId, ano, isAdmin, isAuditMode }) {
       toast.success(editItem ? 'Batismo atualizado!' : 'Batismo registrado!')
       setShowForm(false); setEditItem(null)
       setForm({ nome: '', mes: '', obs: '' }); setFileInput(null)
+      syncDesafioBatismo()
     },
     onError: (e) => toast.error('Erro: ' + e.message),
   })
@@ -1444,6 +1801,7 @@ function BatismosTab({ baseId, ano, isAdmin, isAuditMode }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['batismos', baseId, ano] })
       toast.success('Removido.')
+      syncDesafioBatismo()
     },
     onError: (e) => toast.error('Erro: ' + e.message),
   })
@@ -1769,35 +2127,151 @@ function FotosTab({ baseId, isAdmin, isAuditMode }) {
 }
 
 // ── COMPARATIVO TAB ───────────────────────────────────────────────
-function ComparativoTab({ baseId, cfgTrim, sabados, catalogo, registros }) {
+function ComparativoTab({ baseId, baseNome, tipo, cfgTrim, sabados, catalogo, registros }) {
+  const qc = useQueryClient()
+  const { data: provasCatalogo = [] } = useTable('Provas')
   const { data: notas = [], isLoading } = useQuery({
-    queryKey: ['notas_teen_trimestre', baseId, cfgTrim?.primeiro_sabado, cfgTrim?.ultimo_sabado],
-    queryFn: () => db.getNotasTeenPorBaseETrimestre(baseId, cfgTrim.primeiro_sabado, cfgTrim.ultimo_sabado),
+    queryKey: ['notas_trimestre_comparativo', tipo, baseId, baseNome, cfgTrim?.primeiro_sabado, cfgTrim?.ultimo_sabado],
+    queryFn: () => {
+      const isSoul = String(tipo ?? '').toLowerCase().includes('soul')
+      return isSoul
+        ? db.getNotasSoulPorBaseETrimestre(baseId, cfgTrim.primeiro_sabado, cfgTrim.ultimo_sabado, baseNome)
+        : db.getNotasTeenPorBaseETrimestre(baseId, cfgTrim.primeiro_sabado, cfgTrim.ultimo_sabado, baseNome)
+    },
     enabled: Boolean(baseId && cfgTrim),
   })
 
-  const cartaoDesafio = useMemo(() =>
-    catalogo.find(d => d.categoria === 'admin' && d.periodicidade === 'semanal' && /cart[aã]o/i.test(d.nome)),
+  const comunhaoDesafio = useMemo(() =>
+    catalogo.find(d =>
+      isCategoriaAutoAdministrativa(d.categoria) &&
+      (d.periodicidade === 'semanal' || d.rastreamento === 'semanal') &&
+      /comunh[aã]o/i.test(d.nome)
+    ),
     [catalogo]
   )
   const assiduidadeDesafio = useMemo(() =>
-    catalogo.find(d => d.categoria === 'admin' && d.periodicidade === 'semanal' && /assiduidade/i.test(d.nome)),
+    catalogo.find(d =>
+      isCategoriaAutoAdministrativa(d.categoria) &&
+      (d.periodicidade === 'semanal' || d.rastreamento === 'semanal') &&
+      /assiduidade/i.test(d.nome)
+    ),
     [catalogo]
   )
 
   const notasByDate = useMemo(() => {
+    function normalizeDateOnly(value) {
+      if (!value) return ''
+      const raw = String(value).trim()
+      if (!raw) return ''
+
+      // ISO (yyyy-mm-dd ou timestamp)
+      const isoLike = raw.slice(0, 10)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(isoLike)) return isoLike
+
+      // BR (dd/mm/yyyy)
+      const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+      if (br) return `${br[3]}-${br[2]}-${br[1]}`
+
+      return ''
+    }
+
     const map = {}
     notas.forEach(n => {
-      const date = (n.Data ?? '').slice(0, 10)
+      const date = normalizeDateOnly(n.Data ?? n.data)
+      if (!date) return
       if (!map[date]) map[date] = []
       map[date].push(n)
     })
     return map
   }, [notas])
 
+  const provasByDate = useMemo(() => {
+    const set = new Set()
+    provasCatalogo
+      .filter(p => p.tipo === tipo)
+      .forEach(p => {
+        const date = String(p.data || p.Data || '').slice(0, 10)
+        if (date && /\bprova\b/i.test(p.nome || '')) set.add(date)
+      })
+    return set
+  }, [provasCatalogo, tipo])
+
   function getRegistro(desafioId, dataSabado) {
     return registros.find(r => r.desafio_id === desafioId && r.data_sabado === dataSabado)
   }
+
+  function hasAnsweredValue(value) {
+    return value !== null && value !== undefined && String(value).trim() !== ''
+  }
+
+  function notaTemComunhaoSim(nota) {
+    const valor = String(nota?.comunhao ?? nota?.Comunhao ?? '').trim().toLowerCase()
+    return valor === 'sim' || valor === 's' || valor === 'true' || valor === '1' || valor === 'yes' || valor === 'x'
+  }
+
+  const statusBySabado = useMemo(() => {
+    const entries = sabados.map((sab) => {
+      const notasDia = notasByDate[sab] ?? []
+      const temNotas = notasDia.length > 0
+      const comunhaoAuto = temNotas && notasDia.every(notaTemComunhaoSim)
+      const assidAuto = temNotas
+      // Manual só conta se houver notas lançadas — sem notas não há como validar assiduidade/comunhão.
+      const comunhaoManual = temNotas && comunhaoDesafio ? Boolean(getRegistro(comunhaoDesafio.id, sab)?.realizado) : false
+      const assidManual = temNotas && assiduidadeDesafio ? Boolean(getRegistro(assiduidadeDesafio.id, sab)?.realizado) : false
+
+      return [sab, {
+        notasDia,
+        temNotas,
+        comunhaoOk: comunhaoManual || comunhaoAuto,
+        assidOk: assidManual || assidAuto,
+        comunhaoAuto,
+        assidAuto,
+      }]
+    })
+
+    return Object.fromEntries(entries)
+  }, [sabados, notasByDate, comunhaoDesafio, assiduidadeDesafio, registros])
+
+  useEffect(() => {
+    if (!baseId || !catalogo?.length || !notas.length) return
+
+    let cancelled = false
+
+    async function syncAutomaticos() {
+      const tasks = []
+
+      sabados.forEach((sab) => {
+        const status = statusBySabado[sab]
+        if (!status?.temNotas) return
+
+        const needsAssid = assiduidadeDesafio && status.assidAuto && !getRegistro(assiduidadeDesafio.id, sab)?.realizado
+        const needsComunhao = comunhaoDesafio && status.comunhaoAuto && !getRegistro(comunhaoDesafio.id, sab)?.realizado
+
+        if (!needsAssid && !needsComunhao) return
+
+        tasks.push(
+          db.syncDesafiosAdministrativosFromNotas({
+            base_id: baseId,
+            tipo: catalogo[0]?.tipo || 'G148 Teen',
+            data_sabado: sab,
+            rows: status.notasDia,
+            responsavel: null,
+            catalogo,
+          })
+        )
+      })
+
+      if (tasks.length === 0) return
+
+      await Promise.all(tasks)
+      if (!cancelled) {
+        qc.invalidateQueries({ queryKey: ['desafios_registros', baseId, cfgTrim?.primeiro_sabado, cfgTrim?.ultimo_sabado] })
+      }
+    }
+
+    syncAutomaticos()
+    return () => { cancelled = true }
+  }, [baseId, catalogo, notas, sabados, statusBySabado, assiduidadeDesafio, comunhaoDesafio, registros, qc, cfgTrim?.primeiro_sabado, cfgTrim?.ultimo_sabado])
 
   if (!baseId || !cfgTrim) return (
     <div className="card empty-state">
@@ -1808,9 +2282,9 @@ function ComparativoTab({ baseId, cfgTrim, sabados, catalogo, registros }) {
 
   if (isLoading) return <div className="card empty-state"><div className="spinner" /></div>
 
-  const totNotas  = sabados.filter(s => (notasByDate[s] ?? []).length > 0).length
-  const totCartao = cartaoDesafio ? sabados.filter(s => getRegistro(cartaoDesafio.id, s)?.realizado).length : null
-  const totAssid  = assiduidadeDesafio ? sabados.filter(s => getRegistro(assiduidadeDesafio.id, s)?.realizado).length : null
+  const totNotas  = sabados.filter(s => statusBySabado[s]?.temNotas).length
+  const totComunhao = sabados.filter(s => statusBySabado[s]?.comunhaoOk).length
+  const totAssid  = sabados.filter(s => statusBySabado[s]?.assidOk).length
 
   return (
     <div className="card section">
@@ -1823,10 +2297,10 @@ function ComparativoTab({ baseId, cfgTrim, sabados, catalogo, registros }) {
             <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 4 }}>Provas lançadas</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--c2)' }}>{totNotas} <span style={{ fontSize: 12, opacity: 0.5 }}>/ {sabados.length} sáb.</span></div>
           </div>
-          {totCartao !== null && (
+          {totComunhao !== null && (
             <div style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 10, padding: '12px 18px', minWidth: 140 }}>
-              <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 4 }}>Cartão ES</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--good)' }}>{totCartao} <span style={{ fontSize: 12, opacity: 0.5 }}>/ {sabados.length}</span></div>
+              <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 4 }}>Comunhão diária</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--good)' }}>{totComunhao} <span style={{ fontSize: 12, opacity: 0.5 }}>/ {sabados.length}</span></div>
             </div>
           )}
           {totAssid !== null && (
@@ -1843,18 +2317,19 @@ function ComparativoTab({ baseId, cfgTrim, sabados, catalogo, registros }) {
               <tr>
                 <th style={{ width: 110 }}>Sábado</th>
                 <th style={{ textAlign: 'center' }}>Provas lançadas</th>
-                <th style={{ textAlign: 'center' }}>Preenchimento do Cartão ES</th>
+                <th style={{ textAlign: 'center' }}>COMUNHÃO DIÁRIA</th>
                 <th style={{ textAlign: 'center' }}>Assiduidade e Portal ANC</th>
               </tr>
             </thead>
             <tbody>
               {sabados.map(sab => {
-                const notasDia = notasByDate[sab] ?? []
-                const temNotas = notasDia.length > 0
-                const cartaoOk = cartaoDesafio ? (getRegistro(cartaoDesafio.id, sab)?.realizado ?? false) : null
-                const assidOk  = assiduidadeDesafio ? (getRegistro(assiduidadeDesafio.id, sab)?.realizado ?? false) : null
-                const allOk    = temNotas && cartaoOk !== false && assidOk !== false
-                const nenhum   = !temNotas && cartaoOk === false && assidOk === false
+                const status = statusBySabado[sab] ?? {}
+                const notasDia = status.notasDia ?? []
+                const temNotas = Boolean(status.temNotas)
+                const comunhaoOk = Boolean(status.comunhaoOk)
+                const assidOk  = Boolean(status.assidOk)
+                const allOk    = temNotas && comunhaoOk && assidOk
+                const nenhum   = !temNotas && !comunhaoOk && !assidOk
 
                 return (
                   <tr key={sab} style={{ background: allOk ? 'rgba(56,242,163,.04)' : nenhum ? 'rgba(255,80,80,.03)' : undefined }}>
@@ -1862,21 +2337,19 @@ function ComparativoTab({ baseId, cfgTrim, sabados, catalogo, registros }) {
                     <td style={{ textAlign: 'center' }}>
                       {temNotas
                         ? <span style={{ color: 'var(--good)', fontSize: 13 }}>✅ {notasDia.length} nota(s)</span>
-                        : <span style={{ color: 'var(--muted)', fontSize: 13 }}>❌ Sem notas</span>}
+                        : provasByDate.has(sab)
+                          ? <span style={{ color: 'var(--muted)', fontSize: 13 }}>❌ Sem prova</span>
+                          : <span style={{ opacity: 0.35, fontSize: 13 }}>—</span>}
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      {cartaoOk === null
-                        ? <span style={{ opacity: 0.35 }}>—</span>
-                        : cartaoOk
-                          ? <span style={{ color: 'var(--good)', fontSize: 13 }}>✅ Sim</span>
-                          : <span style={{ color: 'var(--muted)', fontSize: 13 }}>❌ Não</span>}
+                      {comunhaoOk
+                        ? <span style={{ color: 'var(--good)', fontSize: 13 }}>✅ Sim</span>
+                        : <span style={{ color: 'var(--muted)', fontSize: 13 }}>❌ Não</span>}
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      {assidOk === null
-                        ? <span style={{ opacity: 0.35 }}>—</span>
-                        : assidOk
-                          ? <span style={{ color: 'var(--good)', fontSize: 13 }}>✅ Sim</span>
-                          : <span style={{ color: 'var(--muted)', fontSize: 13 }}>❌ Não</span>}
+                      {assidOk
+                        ? <span style={{ color: 'var(--good)', fontSize: 13 }}>✅ Sim</span>
+                        : <span style={{ color: 'var(--muted)', fontSize: 13 }}>❌ Não</span>}
                     </td>
                   </tr>
                 )
@@ -1884,17 +2357,6 @@ function ComparativoTab({ baseId, cfgTrim, sabados, catalogo, registros }) {
             </tbody>
           </table>
         </div>
-
-        {!cartaoDesafio && (
-          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--warn)' }}>
-            ⚠️ Desafio "Preenchimento do Cartão ES" não encontrado no catálogo administrativo.
-          </div>
-        )}
-        {!assiduidadeDesafio && (
-          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--warn)' }}>
-            ⚠️ Desafio "Assiduidade" não encontrado no catálogo administrativo.
-          </div>
-        )}
       </div>
     </div>
   )

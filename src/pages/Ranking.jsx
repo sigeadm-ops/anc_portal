@@ -20,19 +20,28 @@ function gerarSabados(primeiro, ultimo) {
 
 function anoAtual() { return new Date().getFullYear() }
 
+function normalizeBaseName(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
 function getTier(score, isSoul = false) {
-  if (score >= 1400) return { nome: 'Sou Mega',   cor: '#FFD700', bg: isSoul ? 'rgba(141,82,0,.15)' : 'rgba(255,215,0,.15)',   icon: '🥇' }
-  if (score >= 850)  return { nome: 'Sou Master', cor: isSoul ? '#757575' : '#C0C0C0', bg: isSoul ? 'rgba(117,117,117,.13)' : 'rgba(192,192,192,.13)', icon: '🥈' }
-  if (score >= 500)  return { nome: 'Tô Dentro',  cor: isSoul ? '#92400E' : '#CD7F32', bg: isSoul ? 'rgba(146,64,14,.13)' : 'rgba(205,127,50,.13)',  icon: '🥉' }
-  if (score >= 200)  return { nome: 'Faço Parte', cor: isSoul ? '#5B21B6' : '#7B68EE', bg: isSoul ? 'rgba(91,33,182,.13)' : 'rgba(123,104,238,.13)', icon: '⭐' }
-  return null
+  if (score >= 1400) return { nome: 'Sou Mega',    cor: '#FFD700', bg: isSoul ? 'rgba(141,82,0,.15)' : 'rgba(255,215,0,.15)',   icon: '🥇' }
+  if (score >= 850)  return { nome: 'Sou Master',  cor: isSoul ? '#757575' : '#C0C0C0', bg: isSoul ? 'rgba(117,117,117,.13)' : 'rgba(192,192,192,.13)', icon: '🥈' }
+  if (score >= 500)  return { nome: 'Tô Dentro',   cor: isSoul ? '#92400E' : '#CD7F32', bg: isSoul ? 'rgba(146,64,14,.13)' : 'rgba(205,127,50,.13)',  icon: '🥉' }
+  if (score >= 200)  return { nome: 'Faço Parte',  cor: isSoul ? '#5B21B6' : '#7B68EE', bg: isSoul ? 'rgba(91,33,182,.13)' : 'rgba(123,104,238,.13)', icon: '⭐' }
+  return         { nome: 'Participando', cor: '#6B7280', bg: 'rgba(107,114,128,.1)',  icon: '🚩' }
 }
 
 const TIERS_ORDER = [
-  { min: 1400, max: Infinity, nome: 'Sou Mega',   cor: '#FFD700', icon: '🥇' },
-  { min: 850,  max: 1399,    nome: 'Sou Master', cor: '#C0C0C0', icon: '🥈' },
-  { min: 500,  max: 849,     nome: 'Tô Dentro',  cor: '#CD7F32', icon: '🥉' },
-  { min: 200,  max: 499,     nome: 'Faço Parte', cor: '#7B68EE', icon: '⭐' },
+  { min: 1400, max: Infinity, nome: 'Sou Mega',    cor: '#FFD700', icon: '🥇' },
+  { min: 850,  max: 1399,    nome: 'Sou Master',  cor: '#C0C0C0', icon: '🥈' },
+  { min: 500,  max: 849,     nome: 'Tô Dentro',   cor: '#CD7F32', icon: '🥉' },
+  { min: 200,  max: 499,     nome: 'Faço Parte',  cor: '#7B68EE', icon: '⭐' },
+  { min: 0,    max: 199,     nome: 'Participando', cor: '#6B7280', icon: '🚩' },
 ]
 
 const NIVEIS = [
@@ -134,6 +143,100 @@ function Podium({ top3, showPoints, labelPts = 'pts' }) {
       <PodiumSlot item={segundo}  rank={2} showPoints={showPoints} labelPts={labelPts} />
       <PodiumSlot item={primeiro} rank={1} showPoints={showPoints} labelPts={labelPts} />
       <PodiumSlot item={terceiro} rank={3} showPoints={showPoints} labelPts={labelPts} />
+    </div>
+  )
+}
+
+// Novo layout em 4 colunas por tier (para view de bases)
+function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = false }) {
+  // Agrupa os itens por tier
+  const itemsByTier = useMemo(() => {
+    const grouped = {}
+    TIERS_ORDER.forEach(t => { grouped[t.nome] = [] })
+    items.forEach(item => {
+      const tier = getTier(item.pontos, item.isSoul)
+      grouped[tier.nome].push(item)
+    })
+    // Ordena alfabeticamente dentro de cada tier
+    Object.keys(grouped).forEach(tierName => {
+      grouped[tierName].sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? ''))
+    })
+    return grouped
+  }, [items])
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, paddingTop: 12 }}>
+      {TIERS_ORDER.map(tier => {
+        const basesNoTier = itemsByTier[tier.nome] ?? []
+        if (basesNoTier.length === 0) return null
+        const isParticipando = tier.nome === 'Participando'
+
+        return (
+          <div key={tier.nome} style={{
+            borderRadius: 12, overflow: 'hidden',
+            border: `2px solid ${tier.cor}${isParticipando ? '60' : ''}`,
+            background: `${tier.cor}${isParticipando ? '06' : '08'}`,
+          }}>
+            {/* Header da coluna */}
+            <div style={{
+              background: isParticipando
+                ? `linear-gradient(135deg,${tier.cor}aa 0%,${tier.cor}88 100%)`
+                : `linear-gradient(135deg,${tier.cor} 0%,${tier.cor}dd 100%)`,
+              padding: '14px 16px', textAlign: 'center',
+              color: '#fff',
+            }}>
+              <div style={{ fontSize: 24, marginBottom: 4 }}>{tier.icon}</div>
+              <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: '.5px', textTransform: 'uppercase' }}>
+                {tier.nome}
+              </div>
+              {isParticipando && (
+                <div style={{ fontSize: 11, opacity: 0.9, marginTop: 3, fontWeight: 500, fontStyle: 'italic' }}>
+                  na linha de partida
+                </div>
+              )}
+              <div style={{ fontSize: 12, opacity: 0.95, marginTop: 4, fontWeight: 600 }}>
+                {basesNoTier.length} {basesNoTier.length === 1 ? 'base' : 'bases'}
+              </div>
+            </div>
+
+            {/* Lista de bases */}
+            <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {basesNoTier.map((item, idx) => (
+                <div key={item.id ?? item.nome ?? idx} style={{
+                  padding: isParticipando ? '8px 12px' : '10px 12px',
+                  borderRadius: 8,
+                  background: `${tier.cor}${isParticipando ? '0a' : '12'}`,
+                  border: `1px solid ${tier.cor}${isParticipando ? '22' : '33'}`,
+                }}>
+                  <div style={{
+                    fontWeight: isParticipando ? 500 : 700,
+                    fontSize: isParticipando ? 13 : 14,
+                    marginBottom: item.sub ? 2 : 0,
+                    opacity: isParticipando ? 0.85 : 1,
+                  }}>
+                    {item.nome}
+                  </div>
+                  {item.sub && (
+                    <div style={{ fontSize: 11, opacity: 0.5 }}>
+                      {item.sub}
+                    </div>
+                  )}
+                  {(showPoints || isAdmin) && (
+                    <div style={{ marginTop: 4, textAlign: 'right', fontWeight: 800, color: tier.cor, fontSize: 12 }}>
+                      {Number(item.pontos ?? 0).toFixed(1)} pts
+                    </div>
+                  )}
+                  {isAdmin && Number.isFinite(Number(item.notaMedia)) && (
+                    <div style={{ marginTop: 2, textAlign: 'right', fontSize: 11, opacity: 0.65 }}>
+                      notas: {Number(item.notaMedia).toFixed(1)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -244,6 +347,7 @@ export default function Ranking() {
   const [filtroDistrito, setFiltroDistrito]   = useState('')
   const [filtroIgreja, setFiltroIgreja]       = useState('')
   const [filtroBase, setFiltroBase]           = useState('')
+  const LIVE_REFRESH_MS = 8000
 
   const { data: bases = [] }     = useTable('Bases')
   const { data: regioes = [] }   = useTable('Regiao')
@@ -259,27 +363,37 @@ export default function Ranking() {
   const { data: trimestresConfig = [] } = useQuery({
     queryKey: ['configuracao_trimestres', ano],
     queryFn: () => db.getConfiguracaoTrimestres(ano),
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchOnWindowFocus: true,
   })
 
   const { data: todosRegistros = [], isLoading: loadingReg } = useQuery({
     queryKey: ['ranking_registros', ano],
     queryFn: () => db.getAllRegistrosPorAno(ano),
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchOnWindowFocus: true,
   })
 
   const { data: todosMarcos = [], isLoading: loadingMar } = useQuery({
     queryKey: ['ranking_marcos', ano],
     queryFn: () => db.getAllMarcosPorAno(ano),
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchOnWindowFocus: true,
   })
 
   const { data: todasNotas = [], isLoading: loadingNotas } = useQuery({
     queryKey: ['ranking_notas', ano, type],
     queryFn: () => type === 'soul' ? db.getAllNotasSoulPorAno(ano) : db.getAllNotasTeenPorAno(ano),
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchOnWindowFocus: true,
   })
 
   const { data: discipulosRegs = [], isLoading: loadingDisc } = useQuery({
     queryKey: ['all_discipulos', ano],
     queryFn: () => db.getAllDiscipulosRegistrosPorAno(ano),
     staleTime: 2 * 60 * 1000,
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchOnWindowFocus: true,
   })
 
   const { data: discipulosCatalogo = [] } = useQuery({
@@ -292,6 +406,8 @@ export default function Ranking() {
     queryKey: ['all_batismos', ano],
     queryFn: () => db.getAllBatismosPorAno(ano),
     staleTime: 2 * 60 * 1000,
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchOnWindowFocus: true,
   })
 
   const { data: batismosConfig = null } = useQuery({
@@ -312,26 +428,55 @@ export default function Ranking() {
     [bases, currentTipo]
   )
 
-  // Média de notas por base (média das médias dos alunos)
+  // Notas por base seguindo a regra:
+  // - Média do dia = soma das notas ÷ alunos que fizeram AQUELA prova (não o total da turma)
+  // - Pontos da base = soma das médias diárias dos sábados lançados
   const notasMediaPorBase = useMemo(() => {
-    const map = {} // base_id -> { studentKey -> {sum, count} }
+    // Agrupa notas por base por ID e por NOME normalizado
+    // Isso evita perder pontuação quando há divergência entre IDs legados e UUIDs.
+    const mapById = {}   // base_id -> { 'YYYY-MM-DD' -> { sum, count } }
+    const mapByName = {} // base_nome_normalizado -> { 'YYYY-MM-DD' -> { sum, count } }
+
     todasNotas.forEach(r => {
-      const baseId = r.id_base
+      const baseIdRaw = r.id_base ?? r.base_id
+      const baseId = String(baseIdRaw ?? '').trim()
+      const baseNameNorm = normalizeBaseName(r.Base ?? r.base ?? '')
       const nota = Number(r.nota ?? r.Nota)
-      const nome = r.Membros ?? r.nome_aluno ?? ''
-      if (!baseId || !Number.isFinite(nota) || !nome.trim()) return
-      const studentKey = r.id_membros ?? (baseId + '|' + nome)
-      if (!map[baseId]) map[baseId] = {}
-      if (!map[baseId][studentKey]) map[baseId][studentKey] = { sum: 0, count: 0 }
-      map[baseId][studentKey].sum += nota
-      map[baseId][studentKey].count++
+      const dataRaw = r.data ?? r.Data
+      const data = dataRaw ? String(dataRaw).slice(0, 10) : null
+      if (!Number.isFinite(nota) || !data || (!baseId && !baseNameNorm)) return
+
+      if (baseId) {
+        if (!mapById[baseId]) mapById[baseId] = {}
+        if (!mapById[baseId][data]) mapById[baseId][data] = { sum: 0, count: 0 }
+        mapById[baseId][data].sum += nota
+        mapById[baseId][data].count += 1
+      }
+
+      if (baseNameNorm) {
+        if (!mapByName[baseNameNorm]) mapByName[baseNameNorm] = {}
+        if (!mapByName[baseNameNorm][data]) mapByName[baseNameNorm][data] = { sum: 0, count: 0 }
+        mapByName[baseNameNorm][data].sum += nota
+        mapByName[baseNameNorm][data].count += 1
+      }
     })
-    const result = {}
-    Object.entries(map).forEach(([baseId, students]) => {
-      const avgs = Object.values(students).map(s => s.sum / s.count)
-      result[baseId] = avgs.length > 0 ? avgs.reduce((a, b) => a + b, 0) / avgs.length : 0
+
+    const sumDailyAverages = (byDate) => Object.values(byDate).reduce((acc, { sum, count }) => {
+      return acc + (count > 0 ? sum / count : 0)
+    }, 0)
+
+    const byId = {}
+    Object.entries(mapById).forEach(([baseId, byDate]) => {
+      // Soma as médias diárias (dias sem prova = 0 implícito)
+      byId[baseId] = sumDailyAverages(byDate)
     })
-    return result
+
+    const byName = {}
+    Object.entries(mapByName).forEach(([baseName, byDate]) => {
+      byName[baseName] = sumDailyAverages(byDate)
+    })
+
+    return { byId, byName }
   }, [todasNotas])
 
   // Mapa de pontos de discípulos por base
@@ -404,7 +549,8 @@ export default function Ranking() {
         return s + (done ? Number(d.pontos_total) : 0)
       }, 0)
 
-      const notaMedia     = notasMediaPorBase[baseId] ?? 0
+      const baseNameNorm = normalizeBaseName(base.Base ?? base.nome ?? '')
+      const notaMedia     = notasMediaPorBase.byId?.[String(baseId)] ?? notasMediaPorBase.byName?.[baseNameNorm] ?? 0
       const discipulosPts = discipulosPtsPorBase[baseId] ?? 0
       const batismosPts   = batismosPtsPorBase[baseId]  ?? 0
       const pontos = Math.round((weeklyPts + mensaisPts + pontuaisPts + anuaisPts + notaMedia + discipulosPts + batismosPts) * 10) / 10
@@ -426,7 +572,8 @@ export default function Ranking() {
     }).sort((a, b) => b.pontos - a.pontos)
   }, [basesFiltradas, catalogo, trimestresConfig, todosRegistros, todosMarcos, notasMediaPorBase, discipulosPtsPorBase, batismosPtsPorBase])
 
-  // Ranking individual de alunos (média das notas)
+  // Ranking individual de alunos:
+  // pontos = soma de todas as notas lançadas para o aluno
   const rankingAlunos = useMemo(() => {
     const map = {}
     todasNotas.forEach(r => {
@@ -458,11 +605,11 @@ export default function Ranking() {
       .filter(s => s.count > 0)
       .map(s => ({
         ...s,
-        pontos: Math.round((s.sum / s.count) * 10) / 10,
+        pontos: Math.round(s.sum * 10) / 10,
         sub: s.base,
-        extra: `${s.count} ${s.count === 1 ? 'prova' : 'provas'}`,
+        extra: `${s.count} ${s.count === 1 ? 'prova lançada' : 'provas lançadas'}`,
       }))
-      .sort((a, b) => b.pontos - a.pontos)
+      .sort((a, b) => (b.pontos - a.pontos) || a.nome.localeCompare(b.nome))
   }, [todasNotas])
 
   // Número de bases G148 por igreja
@@ -505,7 +652,7 @@ export default function Ranking() {
     TIERS_ORDER.forEach(t => { counts[t.nome] = 0 })
     scoresPorBase.forEach(b => {
       const t = getTier(b.pontos)
-      if (t) counts[t.nome] = (counts[t.nome] ?? 0) + 1
+      counts[t.nome] = (counts[t.nome] ?? 0) + 1
     })
     return TIERS_ORDER.map(t => ({ ...t, count: counts[t.nome] ?? 0 })).filter(t => t.count > 0)
   }, [scoresPorBase])
@@ -783,8 +930,8 @@ export default function Ranking() {
         </div>
       )}
 
-      {/* ── Pódio ── */}
-      {!isLoading && top3.length > 0 && (
+      {/* ── Pódio (apenas para alunos) ── */}
+      {!isLoading && view === 'alunos' && top3.length > 0 && (
         <div className="card section" style={{
           background: type === 'soul' 
             ? 'linear-gradient(180deg,rgba(255,143,0,.15) 0%,rgba(255,143,0,.05) 100%)'
@@ -821,11 +968,19 @@ export default function Ranking() {
               {listAtual.length > 100 ? ' · top 100' : ''}
             </span>
           </div>
-          {top3.length > 0 && (
-            <Top3Chips top3={top3} showPoints={canSeePoints} labelPts={labelPts} />
-          )}
-          {resto.length > 0 && (
-            <RankingList items={resto} startRank={4} showPoints={canSeePoints} labelPts={labelPts} />
+          
+          {/* Layout em 4 colunas para ranking de bases */}
+          {view === 'bases' ? (
+            <BaseRankingByTiers items={listAtual} showPoints={canSeePoints} labelPts={labelPts} isAdmin={isAdmin} />
+          ) : (
+            <>
+              {top3.length > 0 && (
+                <Top3Chips top3={top3} showPoints={canSeePoints} labelPts={labelPts} />
+              )}
+              {resto.length > 0 && (
+                <RankingList items={resto} startRank={4} showPoints={canSeePoints} labelPts={labelPts} />
+              )}
+            </>
           )}
         </div>
       )}

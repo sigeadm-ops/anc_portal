@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { useIgrejas } from '../hooks/useIgrejas'
+import { useAuthStore } from '../store/authStore'
 import { today, buildBaseLabel, findDuplicateBaseGroups, formatBaseId, normalizeBaseName } from '../utils/helpers'
 
 const EMPTY = {
@@ -17,12 +18,15 @@ const EMPTY = {
 export default function Bases() {
   const { type } = useParams()
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
+  const { isAdmin, isAuditMode } = useAuthStore()
+  const canViewSensitiveContacts = isAdmin || isAuditMode
   
   const { data, isLoading, insert, update, remove } = useTable('Bases', 'BASES')
   const geo = useIgrejas()
 
   const [form, setForm] = useState({ ...EMPTY, Tipo: currentTipo })
   const [editingId, setEditingId] = useState(null)
+  const [originalStatus, setOriginalStatus] = useState('Ativo')
   const [search, setSearch] = useState('')
 
   // Atualiza o tipo no formulário se o parâmetro da URL mudar
@@ -67,12 +71,14 @@ export default function Bases() {
   function startEdit(base) {
     setForm({ ...EMPTY, ...base })
     setEditingId(base.id_base)
+    setOriginalStatus(base.Status || 'Ativo')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function cancelEdit() {
     setForm({ ...EMPTY, Tipo: currentTipo })
     setEditingId(null)
+    setOriginalStatus('Ativo')
   }
 
   async function handleSubmit(e) {
@@ -86,21 +92,28 @@ export default function Bases() {
         icon: '⚠️',
       })
     }
+
+    const statusFinal = editingId ? (form.Status || 'Ativo') : 'Ativo'
+    const statusMudou = editingId ? statusFinal !== (originalStatus || 'Ativo') : false
+    const dataCadFinal = editingId
+      ? (statusMudou ? today() : (form.Data_Cad || today()))
+      : today()
+
     const payload = {
       Tipo: form.Tipo,
       Base: form.Base,
       id_igrejas: form.id_igrejas,
       Coord: form.Coord,
+      Prof: form.Prof,
+      Midia: form.Midia,
       Coord_Fone: form.Coord_Fone,
       Coord_Email: form.Coord_Email,
-      Prof: form.Prof,
       Prof_Fone: form.Prof_Fone,
       Prof_Email: form.Prof_Email,
-      Midia: form.Midia,
       Midia_Fone: form.Midia_Fone,
       Midia_Email: form.Midia_Email,
-      Data_Cad: form.Data_Cad,
-      Status: form.Status,
+      Data_Cad: dataCadFinal,
+      Status: statusFinal,
     }
     if (editingId) {
       await update.mutateAsync({ id: editingId, data: payload })
@@ -154,6 +167,14 @@ export default function Bases() {
         <div className="card-header">
           <div className="card-title">
             {editingId ? '✏️ Editando Base' : '➕ Nova Base'}
+            <span style={{
+              marginLeft: 8, fontSize: 11, fontWeight: 700, padding: '2px 10px',
+              borderRadius: 20, background: type === 'soul' ? 'var(--soul-amber)' : 'rgba(124,58,237,.12)',
+              color: type === 'soul' ? 'var(--soul-brown)' : 'var(--c1)',
+              border: `1px solid ${type === 'soul' ? 'var(--soul-brown)44' : 'var(--c1)44'}`
+            }}>
+              {currentTipo}
+            </span>
             {editingId && (
               <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--muted)', marginLeft: 6 }}>
                 {editingId}
@@ -185,11 +206,7 @@ export default function Bases() {
             </div>
           )}
 
-          <div className="form-grid">
-            <div className="form-group" style={{ opacity: 0.7 }}>
-              <label>Tipo</label>
-              <input value={currentTipo} readOnly disabled style={{ background: type === 'soul' ? 'rgba(62,32,0,0.05)' : 'rgba(255,255,255,0.05)', fontWeight: 800 }} />
-            </div>
+          <div className="form-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
             <div className="form-group">
               <label>Nome da Base *</label>
               <input
@@ -235,25 +252,31 @@ export default function Bases() {
                 {igrejasOpts.map(i => <option key={i.id_igrejas} value={i.id_igrejas}>{i.Igrejas}</option>)}
               </select>
             </div>
-            <div className="form-group">
-              <label>Status</label>
-              <select value={form.Status} onChange={e => set('Status', e.target.value)}>
-                <option value="Ativo">Ativo</option>
-                <option value="Inativo">Inativo</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Data de Cadastro</label>
-              <input
-                type="date"
-                value={form.Data_Cad}
-                onChange={e => set('Data_Cad', e.target.value)}
-              />
-            </div>
+            {editingId && (
+              <>
+                <div className="form-group">
+                  <label>Status</label>
+                  <select value={form.Status} onChange={e => set('Status', e.target.value)}>
+                    <option value="Ativo">Ativo</option>
+                    <option value="Inativo">Inativo</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Data de Cadastro (automática)</label>
+                  <input type="date" value={form.Data_Cad || ''} readOnly disabled />
+                </div>
+              </>
+            )}
           </div>
 
           <hr className="divider" />
           <div className="section-label">Responsáveis</div>
+
+          {!canViewSensitiveContacts && (
+            <div className="status-bar" style={{ marginBottom: 14 }}>
+              Os contatos (fone e e-mail) dos responsáveis serão salvos, mas ficam visíveis apenas na área administrativa autenticada.
+            </div>
+          )}
 
           <div className="form-grid-3">
             <div className="form-group">

@@ -4,6 +4,7 @@ import { fmtDate, buildBaseLabel, formatBaseId } from '../utils/helpers'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { db } from '../api/db'
 import toast from 'react-hot-toast'
+import { useAuthStore } from '../store/authStore'
 
 function gerarSabados(primeiro, ultimo) {
   const sabados = []
@@ -19,8 +20,88 @@ function gerarSabados(primeiro, ultimo) {
 
 function anoAtual() { return new Date().getFullYear() }
 
+function toIsoDate(v) {
+  if (!v) return ''
+  const s = String(v).trim()
+  const iso = s.slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso
+  const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`
+  return ''
+}
+
+function monthKey(iso) {
+  return iso ? iso.slice(0, 7) : ''
+}
+
+function quarterFromIso(iso) {
+  if (!iso) return ''
+  const year = Number(iso.slice(0, 4))
+  const month = Number(iso.slice(5, 7))
+  if (!year || !month) return ''
+  const q = Math.ceil(month / 3)
+  return `${year}-T${q}`
+}
+
+function labelMonth(key) {
+  if (!key) return ''
+  const [y, m] = key.split('-')
+  const months = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+  return months[Number(m) - 1] || ''
+}
+
+function labelQuarter(key) {
+  if (!key) return ''
+  const [y, t] = key.split('-T')
+  return `${t}º Trim`
+}
+
+function clampNota(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, Math.min(10, n))
+}
+
+function isSimValue(v) {
+  const raw = String(v ?? '').trim().toLowerCase()
+  return raw === 'sim' || raw === 's' || raw === 'yes' || raw === 'true' || raw === '1' || raw === 'x'
+}
+
+function countSabadosInRange(inicioIso, fimIso) {
+  if (!inicioIso || !fimIso) return 0
+  const inicio = new Date(`${inicioIso}T12:00:00`)
+  const fim = new Date(`${fimIso}T12:00:00`)
+  if (Number.isNaN(inicio.getTime()) || Number.isNaN(fim.getTime()) || inicio > fim) return 0
+
+  while (inicio.getDay() !== 6) inicio.setDate(inicio.getDate() + 1)
+  let total = 0
+  const cursor = new Date(inicio)
+  while (cursor <= fim) {
+    total += 1
+    cursor.setDate(cursor.getDate() + 7)
+  }
+  return total
+}
+
+function isSaturdayIso(iso) {
+  if (!iso) return false
+  const d = new Date(`${iso}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return false
+  return d.getDay() === 6
+}
+
+function escapeHtml(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 export default function Relatorios() {
   const qc = useQueryClient()
+  const { isAdmin } = useAuthStore()
   const [tab, setTab] = useState('geral') // 'geral', 'teen', 'soul'
   
   // Dados principais
@@ -35,18 +116,35 @@ export default function Relatorios() {
   
   // Filtros de Notas
   const [buscaNota, setBuscaNota] = useState('')
+  const [filtroNotaProva, setFiltroNotaProva] = useState('')
+  const [filtroNotaBase, setFiltroNotaBase] = useState('')
+  const [tipoIndividual, setTipoIndividual] = useState('')
+  const [baseIndividual, setBaseIndividual] = useState('')
+  const [membroIndividual, setMembroIndividual] = useState('')
 
   useEffect(() => {
     const main = document.getElementById('main')
     if (!main) return
 
-    if (tab === 'soul') {
+    if (tab === 'soul' || (tab === 'individual' && tipoIndividual === 'Soul+')) {
       main.classList.add('theme-soul')
     } else {
       main.classList.remove('theme-soul')
     }
 
     return () => main.classList.remove('theme-soul')
+  }, [tab, tipoIndividual])
+
+  useEffect(() => {
+    if (tab === 'desempenho' && !isAdmin) {
+      setTab('geral')
+    }
+  }, [tab, isAdmin])
+
+  useEffect(() => {
+    if (tab !== 'teen' && tab !== 'soul') return
+    setFiltroNotaProva('')
+    setFiltroNotaBase('')
   }, [tab])
 
   const setF = (k, v) => setFiltros(f => ({ ...f, [k]: v }))
@@ -174,14 +272,34 @@ export default function Relatorios() {
   }
 
   // ── LÓGICA DE RELATÓRIO DE NOTAS ───────────────────────────
-  const notasFiltradas = useMemo(() => {
+  const notasAtuais = useMemo(() => {
     const raw = tab === 'teen' ? notasTeen : notasSoul
-    if (!raw) return []
-    return raw.filter(n => 
-      !buscaNota || 
-      [n.Membros || n.nome_aluno, n.Base || n.base, n.titulo || n.Titulo].join(' ').toLowerCase().includes(buscaNota.toLowerCase())
-    )
-  }, [tab, notasTeen, notasSoul, buscaNota])
+    return raw || []
+  }, [tab, notasTeen, notasSoul])
+
+  const provasNotaOpts = useMemo(() => {
+    return [...new Set(notasAtuais.map(n => n.titulo || n.Titulo).filter(Boolean))]
+      .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'))
+  }, [notasAtuais])
+
+  const basesNotaOpts = useMemo(() => {
+    return [...new Set(notasAtuais.map(n => n.Base || n.base).filter(Boolean))]
+      .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'))
+  }, [notasAtuais])
+
+  const notasFiltradas = useMemo(() => {
+    if (!notasAtuais.length) return []
+    return notasAtuais.filter(n => {
+      const nomeProva = n.titulo || n.Titulo || ''
+      const nomeBase = n.Base || n.base || ''
+      const texto = [n.Membros || n.nome_aluno, nomeBase, nomeProva].join(' ').toLowerCase()
+
+      if (buscaNota && !texto.includes(buscaNota.toLowerCase())) return false
+      if (filtroNotaProva && nomeProva !== filtroNotaProva) return false
+      if (filtroNotaBase && nomeBase !== filtroNotaBase) return false
+      return true
+    })
+  }, [notasAtuais, buscaNota, filtroNotaProva, filtroNotaBase])
 
   const notasAgrupadas = useMemo(() => {
     const groups = {}
@@ -283,12 +401,31 @@ export default function Relatorios() {
     <div className="fade-in">
       <div className="tab-container">
         <div className={`tab-item ${tab === 'geral' ? 'active' : ''}`} onClick={() => setTab('geral')}>🏠 Atividade Geral</div>
-        <div className={`tab-item ${tab === 'desempenho' ? 'active' : ''}`} onClick={() => setTab('desempenho')}>📈 Desempenho</div>
+        {isAdmin && (
+          <div className={`tab-item ${tab === 'desempenho' ? 'active' : ''}`} onClick={() => setTab('desempenho')}>📈 Desempenho</div>
+        )}
+        <div className={`tab-item ${tab === 'individual' ? 'active' : ''}`} onClick={() => setTab('individual')}>👤 Histórico Individual</div>
         <div className={`tab-item ${tab === 'teen' ? 'active' : ''}`} onClick={() => setTab('teen')}>📋 Notas G148 Teen</div>
         <div className={`tab-item ${tab === 'soul' ? 'active' : ''}`} onClick={() => setTab('soul')}>📋 Notas Soul+</div>
       </div>
 
-      {tab === 'desempenho' && <DesempenhoTab />}
+      {tab === 'desempenho' && isAdmin && <DesempenhoTab />}
+
+      {tab === 'individual' && (
+        <RelatorioIndividualTab
+          bases={bases}
+          notasTeen={notasTeen}
+          notasSoul={notasSoul}
+          membros={membros}
+          tipo={tipoIndividual}
+          setTipo={setTipoIndividual}
+          baseId={baseIndividual}
+          setBaseId={setBaseIndividual}
+          membroId={membroIndividual}
+          setMembroId={setMembroIndividual}
+          downloadCSV={downloadCSV}
+        />
+      )}
 
       {tab === 'geral' && (
         <>
@@ -368,6 +505,22 @@ export default function Relatorios() {
                   onChange={e => setBuscaNota(e.target.value)}
                   style={{ maxWidth: 260 }}
                 />
+                <select
+                  value={filtroNotaProva}
+                  onChange={e => setFiltroNotaProva(e.target.value)}
+                  style={{ maxWidth: 240 }}
+                >
+                  <option value="">Todas as provas</option>
+                  {provasNotaOpts.map((prova) => <option key={prova} value={prova}>{prova}</option>)}
+                </select>
+                <select
+                  value={filtroNotaBase}
+                  onChange={e => setFiltroNotaBase(e.target.value)}
+                  style={{ maxWidth: 220 }}
+                >
+                  <option value="">Todas as bases</option>
+                  {basesNotaOpts.map((base) => <option key={base} value={base}>{base}</option>)}
+                </select>
                 <button className="btn btn-outline btn-sm" onClick={exportarCSVNotas}>📁 CSV</button>
                 <button className="btn btn-outline btn-sm" onClick={imprimir}>🖨️ PDF</button>
               </div>
@@ -448,6 +601,8 @@ const CAT_LABELS_DES  = { admin: 'Adm.', estudo: 'Estudo', missao: 'Missão', mi
 
 function DesempenhoTab() {
   const [ano, setAno]       = useState(anoAtual())
+  const [trimestre, setTrimestre] = useState('')
+  const [baseFiltro, setBaseFiltro] = useState('')
   const [sortBy, setSortBy] = useState('total')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -498,6 +653,31 @@ function DesempenhoTab() {
   const isLoading = loadingReg || loadingMar || loadingNotas || loadingDisc || loadingBat
 
   const basesTeen = useMemo(() => bases.filter(b => b.Tipo === 'G148 Teen'), [bases])
+  const basesTeenFiltradas = useMemo(() => {
+    return basesTeen.filter((b) => !baseFiltro || String(b.id_base ?? b.id) === String(baseFiltro))
+  }, [basesTeen, baseFiltro])
+
+  const trimestreConfigAtivo = useMemo(() => {
+    if (!trimestre) return null
+    return trimestresConfig.find((t) => Number(t.trimestre) === Number(trimestre)) || null
+  }, [trimestresConfig, trimestre])
+
+  const mesesTrimestreAtivo = useMemo(() => {
+    if (!trimestre) return null
+    return new Set(mesesDoTrimestre(Number(trimestre)))
+  }, [trimestre])
+
+  function rowIsInsideSelectedQuarter(dateValue) {
+    if (!trimestre) return true
+    const iso = toIsoDate(dateValue)
+    if (!iso) return false
+    if (trimestreConfigAtivo?.primeiro_sabado && trimestreConfigAtivo?.ultimo_sabado) {
+      return iso >= trimestreConfigAtivo.primeiro_sabado && iso <= trimestreConfigAtivo.ultimo_sabado
+    }
+    if (!mesesTrimestreAtivo) return true
+    const mes = Number(iso.slice(5, 7))
+    return mesesTrimestreAtivo.has(mes)
+  }
 
   const notasMediaPorBase = useMemo(() => {
     const map = {}
@@ -506,6 +686,7 @@ function DesempenhoTab() {
       const nota = Number(r.nota ?? r.Nota)
       const nome = r.Membros ?? r.nome_aluno ?? ''
       if (!baseId || !Number.isFinite(nota) || !nome.trim()) return
+      if (!rowIsInsideSelectedQuarter(r.data ?? r.Data)) return
       const key = r.id_membros ?? (baseId + '|' + nome)
       if (!map[baseId]) map[baseId] = {}
       if (!map[baseId][key]) map[baseId][key] = { sum: 0, count: 0 }
@@ -517,7 +698,7 @@ function DesempenhoTab() {
       result[baseId] = avgs.length > 0 ? avgs.reduce((a, b) => a + b, 0) / avgs.length : 0
     })
     return result
-  }, [todasNotas])
+  }, [todasNotas, trimestre, trimestreConfigAtivo, mesesTrimestreAtivo])
 
   const discipulosPtsPorBase = useMemo(() => {
     if (!discipulosCatalogo.length) return {}
@@ -525,24 +706,28 @@ function DesempenhoTab() {
     const map = {}
     discipulosRegs.forEach(r => {
       if (!r.realizado || !r.data_realizacao || !r.responsavel) return
+      if (!rowIsInsideSelectedQuarter(r.data_realizacao)) return
       const pts = pontosReq[r.requisito_id] ?? 0
       if (!pts) return
       map[r.base_id] = (map[r.base_id] ?? 0) + pts
     })
     return map
-  }, [discipulosRegs, discipulosCatalogo])
+  }, [discipulosRegs, discipulosCatalogo, trimestre, trimestreConfigAtivo, mesesTrimestreAtivo])
 
   const batismosPtsPorBase = useMemo(() => {
     const ptsPorBatismo = Number(batismosConfig?.pontos_por_batismo ?? 0)
     if (!ptsPorBatismo) return {}
     const map = {}
-    batismosRegs.forEach(r => { map[r.base_id] = (map[r.base_id] ?? 0) + ptsPorBatismo })
+    batismosRegs.forEach(r => {
+      if (trimestre && mesesTrimestreAtivo && !mesesTrimestreAtivo.has(Number(r.mes))) return
+      map[r.base_id] = (map[r.base_id] ?? 0) + ptsPorBatismo
+    })
     return map
-  }, [batismosRegs, batismosConfig])
+  }, [batismosRegs, batismosConfig, trimestre, mesesTrimestreAtivo])
 
   const desempenho = useMemo(() => {
-    if (!catalogo.length || !basesTeen.length) return []
-    return basesTeen.map(base => {
+    if (!catalogo.length || !basesTeenFiltradas.length) return []
+    return basesTeenFiltradas.map(base => {
       const baseId = base.id_base ?? base.id
       const catPts = {}
       CATS_DESEMPENHO.forEach(cat => {
@@ -552,7 +737,11 @@ function DesempenhoTab() {
         const pontuais = catDesafios.filter(d => d.rastreamento === 'pontual'  && d.periodicidade === 'trimestral')
         const anuais   = catDesafios.filter(d => d.periodicidade === 'anual')
 
-        const wPts = trimestresConfig.reduce((total, tc) => {
+        const trimestresAlvo = trimestre
+          ? trimestresConfig.filter(tc => Number(tc.trimestre) === Number(trimestre))
+          : trimestresConfig
+
+        const wPts = trimestresAlvo.reduce((total, tc) => {
           const sabadosTc = gerarSabados(tc.primeiro_sabado, tc.ultimo_sabado)
           const numSabs = sabadosTc.length
           if (!numSabs) return total
@@ -565,16 +754,22 @@ function DesempenhoTab() {
         }, 0)
 
         const mPts = mensais.reduce((s, d) => {
+          if (trimestre && Number(Math.ceil(Number(d.mes_ref) / 3)) !== Number(trimestre)) return s
           const done = todosMarcos.some(m => m.base_id === baseId && m.desafio_id === d.id && m.mes === d.mes_ref && m.realizado)
           return s + (done ? Number(d.pontos_total) : 0)
         }, 0)
 
         const pPts = pontuais.reduce((s, d) => {
-          const n = todosMarcos.filter(m => m.base_id === baseId && m.desafio_id === d.id && m.mes != null && m.realizado).length
+          const n = todosMarcos.filter(m => {
+            if (!(m.base_id === baseId && m.desafio_id === d.id && m.mes != null && m.realizado)) return false
+            if (trimestre && mesesTrimestreAtivo && !mesesTrimestreAtivo.has(Number(m.mes))) return false
+            return true
+          }).length
           return s + n * (Number(d.pontos_total) / 3)
         }, 0)
 
         const aPts = anuais.reduce((s, d) => {
+          if (trimestre) return s
           const done = todosMarcos.some(m => m.base_id === baseId && m.desafio_id === d.id && m.trimestre == null && m.mes == null && m.realizado)
           return s + (done ? Number(d.pontos_total) : 0)
         }, 0)
@@ -591,7 +786,7 @@ function DesempenhoTab() {
 
       return { id: baseId, nome: base.Base ?? base.nome ?? 'Base', ...catPts, notaMedia, discipulosPts, batismosPts, total }
     })
-  }, [basesTeen, catalogo, trimestresConfig, todosRegistros, todosMarcos, notasMediaPorBase, discipulosPtsPorBase, batismosPtsPorBase])
+  }, [basesTeenFiltradas, catalogo, trimestresConfig, todosRegistros, todosMarcos, notasMediaPorBase, discipulosPtsPorBase, batismosPtsPorBase, trimestre, mesesTrimestreAtivo])
 
   const sorted = useMemo(() =>
     [...desempenho].sort((a, b) => {
@@ -626,13 +821,33 @@ function DesempenhoTab() {
     <div className="card section fade-in">
       <div className="card-header">
         <div className="card-title">📈 Relatório de Desempenho por Base</div>
-        <select
-          value={ano}
-          onChange={e => setAno(Number(e.target.value))}
-          style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6 }}
-        >
-          {[2024, 2025, 2026].map(a => <option key={a} value={a}>{a}</option>)}
-        </select>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <select
+            value={ano}
+            onChange={e => setAno(Number(e.target.value))}
+            style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6 }}
+          >
+            {[2024, 2025, 2026].map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <select
+            value={trimestre}
+            onChange={e => setTrimestre(e.target.value)}
+            style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6 }}
+          >
+            <option value="">Todos os trimestres</option>
+            {[1,2,3,4].map(t => <option key={t} value={t}>{t}º Trimestre</option>)}
+          </select>
+          <select
+            value={baseFiltro}
+            onChange={e => setBaseFiltro(e.target.value)}
+            style={{ fontSize: 13, padding: '4px 10px', borderRadius: 6, minWidth: 220 }}
+          >
+            <option value="">Todas as bases</option>
+            {basesTeen.map(b => (
+              <option key={b.id_base ?? b.id} value={b.id_base ?? b.id}>{b.Base ?? b.nome ?? 'Base'}</option>
+            ))}
+          </select>
+        </div>
       </div>
       <div className="card-body">
         <div className="table-wrap">
@@ -683,6 +898,896 @@ function DesempenhoTab() {
               {sorted.length === 0 && (
                 <tr><td colSpan={10} style={{ textAlign: 'center', opacity: 0.5, padding: 20 }}>Nenhuma base encontrada.</td></tr>
               )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ColumnLineChart({ title, rows, annualLineValue = 0, variant = 'teen' }) {
+  const isSoul = variant === 'soul'
+  const barGradient = isSoul
+    ? 'linear-gradient(180deg, rgba(255,179,0,.95), rgba(255,143,0,.92))'
+    : 'linear-gradient(180deg, rgba(119,88,255,.95), rgba(39,197,235,.9))'
+  const barShadow = isSoul ? '0 8px 18px rgba(255,143,0,.25)' : '0 8px 18px rgba(39,197,235,.16)'
+  const devLine = isSoul ? 'rgba(62,32,0,0.85)' : 'rgba(255,255,255,0.9)'
+  const annualLine = isSoul ? 'rgba(141,82,0,0.65)' : 'rgba(255,255,255,0.35)'
+  const annualBadgeBg = isSoul ? 'rgba(255,248,225,0.9)' : 'rgba(8,16,56,0.8)'
+  const annualBadgeBorder = isSoul ? '1px solid rgba(141,82,0,0.25)' : '1px solid rgba(255,255,255,0.12)'
+  const annualBadgeColor = isSoul ? '#5d3500' : 'inherit'
+  const labelMaskBg = isSoul ? 'rgba(255,248,225,0.96)' : 'rgba(8,16,56,0.94)'
+  
+  // Determinar qual é o período atual para saber o que é "futuro"
+  const hoje = new Date()
+  const mesAtual = hoje.getMonth() + 1
+  const anoAtualValue = hoje.getFullYear()
+  
+  // Filtrar apenas dados com valores reais (qtd > 0) ou que são do presente/passado
+  const rowsComDados = rows.map((r, i) => {
+    // Se houver dados (qtd > 0), incluir
+    // Se não houver dados mas for passado/presente, incluir mas marcar como "futuro"
+    const isFuturo = r.qtd === 0
+    return { ...r, isFuturo, index: i }
+  })
+  
+  // Encontrar o último índice com dados reais
+  const lastDataIndex = rows.findIndex(r => r.qtd === 0)
+  const hasDataIndex = lastDataIndex >= 0 ? lastDataIndex - 1 : rows.length - 1
+  
+  // Calcular valores apenas para dados reais
+  const valuesWithData = rows.map(r => r.qtd > 0 ? clampNota(r.media || 0) : null)
+  
+  // Construir polyline apenas com pontos que têm dados
+  const pointsWithData = valuesWithData
+    .map((v, i) => v !== null ? { index: i, value: v } : null)
+    .filter(Boolean)
+  
+  const step = rows.length > 1 ? (100 / (rows.length - 1)) : 100
+  const annualPct = Math.max(0, Math.min(100, (clampNota(annualLineValue) / 10) * 100))
+  
+  const points = pointsWithData.map(({ index, value }) => {
+    const x = rows.length === 1 ? 50 : index * step
+    const y = 100 - ((value / 10) * 100)
+    return `${x},${y}`
+  }).join(' ')
+
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <div className="card-header"><div className="card-title">{title}</div></div>
+      <div className="card-body">
+        {rows.length === 0 ? (
+          <div className="empty-state" style={{ padding: 10 }}>Sem dados para o período.</div>
+        ) : (
+          <div style={{ position: 'relative', paddingTop: 12 }}>
+            <div style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: `${12 + (100 - annualPct)}px`,
+              borderTop: `1px dashed ${annualLine}`,
+              pointerEvents: 'none'
+            }} />
+
+            <div style={{
+              position: 'absolute',
+              right: 0,
+              top: `${6 + (100 - annualPct)}px`,
+              fontSize: 10,
+              opacity: 0.75,
+              background: annualBadgeBg,
+              padding: '1px 6px',
+              borderRadius: 999,
+              border: annualBadgeBorder,
+              color: annualBadgeColor
+            }}>
+              Anual {clampNota(annualLineValue).toFixed(1)}
+            </div>
+
+            <div style={{ height: 112, display: 'grid', gridTemplateColumns: `repeat(${rows.length}, minmax(16px,1fr))`, gap: 12, alignItems: 'end', position: 'relative', zIndex: 2 }}>
+              {rows.map((r, i) => {
+                const h = Math.max(4, Math.round((valuesWithData[i] / 10) * 100))
+                const isFuturo = r.qtd === 0
+                return (
+                  <div key={r.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 5, height: '100%' }}>
+                    {!isFuturo && (
+                      <div style={{
+                        textAlign: 'center',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: labelMaskBg,
+                        border: '1px solid transparent',
+                        borderRadius: 999,
+                        padding: '0 6px',
+                        boxShadow: `0 0 0 4px ${labelMaskBg}`,
+                      }}>
+                        {valuesWithData[i].toFixed(1)}
+                      </div>
+                    )}
+                    {isFuturo && <div style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, opacity: 0 }}>0.0</div>}
+                    <div style={{
+                      height: `${h}px`,
+                      width: '100%',
+                      borderRadius: '8px 8px 3px 3px',
+                      background: isFuturo ? 'rgba(128,128,128,0.15)' : barGradient,
+                      boxShadow: isFuturo ? 'none' : barShadow
+                    }} />
+                  </div>
+                )
+              })}
+            </div>
+            {/* Labels dos meses em linha separada, abaixo do grid de barras */}
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${rows.length}, minmax(16px,1fr))`, gap: 12, marginTop: 4 }}>
+              {rows.map((r) => (
+                <div key={r.label} style={{ textAlign: 'center', fontSize: 11, opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.label}</div>
+              ))}
+            </div>
+
+            {points && (
+              <svg
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                style={{ position: 'absolute', left: 0, right: 0, top: 12, height: 100, width: '100%', pointerEvents: 'none', zIndex: 1 }}
+                aria-hidden="true"
+              >
+                <polyline
+                  fill="none"
+                  stroke={devLine}
+                  strokeWidth="1.8"
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  points={points}
+                />
+              </svg>
+            )}
+
+            <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: 11, opacity: 0.85, flexWrap: 'wrap' }}>
+              <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: barGradient }} />
+                Colunas
+              </div>
+              <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ width: 14, borderTop: `2px solid ${devLine}` }} />
+                Linha de Desenvolvimento
+              </div>
+              <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ width: 14, borderTop: `2px dashed ${annualLine}` }} />
+                Linha Anual
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function GaugeChart({ title, value, variant = 'teen' }) {
+  const isSoul = variant === 'soul'
+  const score = clampNota(value)
+  const ratio = score / 10
+  const deg = -90 + ratio * 180
+  const color = isSoul
+    ? `hsl(${38 - ratio * 8} 95% ${86 - ratio * 34}%)`
+    : `hsl(${205 - ratio * 155} 95% ${82 - ratio * 36}%)`
+
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <div className="card-header"><div className="card-title">{title}</div></div>
+      <div className="card-body" style={{ paddingTop: 18 }}>
+        <div style={{ position: 'relative', maxWidth: 520, margin: '0 auto', height: 180 }}>
+          <svg viewBox="0 0 240 140" style={{ width: '100%', height: '100%' }} aria-hidden="true">
+            <defs>
+              <linearGradient id="gaugeTrack" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor={isSoul ? 'hsl(45 100% 91%)' : 'hsl(205 90% 88%)'} />
+                <stop offset="55%" stopColor={isSoul ? 'hsl(38 100% 72%)' : 'hsl(190 88% 70%)'} />
+                <stop offset="100%" stopColor={isSoul ? 'hsl(33 100% 50%)' : 'hsl(285 92% 48%)'} />
+              </linearGradient>
+            </defs>
+
+            <path d="M 20 120 A 100 100 0 0 1 220 120" stroke="rgba(255,255,255,0.12)" strokeWidth="18" fill="none" strokeLinecap="round" />
+            <path
+              d="M 20 120 A 100 100 0 0 1 220 120"
+              stroke="url(#gaugeTrack)"
+              strokeWidth="18"
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={`${Math.max(4, ratio * 314)} 400`}
+            />
+
+            <g transform={`rotate(${deg} 120 120)`}>
+              <line x1="120" y1="120" x2="120" y2="36" stroke={color} strokeWidth="5" strokeLinecap="round" />
+            </g>
+
+            <circle cx="120" cy="120" r="11" fill={color} />
+          </svg>
+
+          <div style={{ position: 'absolute', left: 0, bottom: 4, fontSize: 12, opacity: 0.75 }}>0.0</div>
+          <div style={{ position: 'absolute', right: 0, bottom: 4, fontSize: 12, opacity: 0.75 }}>10.0</div>
+
+          <div style={{
+            position: 'absolute',
+            left: '50%',
+            top: '56%',
+            transform: 'translate(-50%,-50%)',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1, color }}>{score.toFixed(1)}</div>
+            <div style={{ fontSize: 11, opacity: 0.78, marginTop: 4 }}>Média Geral</div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 8, marginTop: 2 }}>
+          {[0, 2.5, 5, 7.5, 10].map(mark => {
+            const r = mark / 10
+            const c = isSoul
+              ? `hsl(${38 - r * 8} 95% ${86 - r * 34}%)`
+              : `hsl(${205 - r * 155} 95% ${82 - r * 36}%)`
+            return (
+              <div key={mark} style={{ textAlign: 'center' }}>
+                <div style={{ height: 6, borderRadius: 999, background: c, marginBottom: 3 }} />
+                <div style={{ fontSize: 10, opacity: 0.7 }}>{mark.toFixed(1)}</div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, setTipo, baseId, setBaseId, membroId, setMembroId, downloadCSV }) {
+  const notasAll = useMemo(() => {
+    const teen = (notasTeen || []).map(n => ({ ...n, _tipo: 'G148 Teen' }))
+    const soul = (notasSoul || []).map(n => ({ ...n, _tipo: 'Soul+' }))
+    return [...teen, ...soul]
+  }, [notasTeen, notasSoul])
+
+  const isSoulMode = tipo === 'Soul+'
+
+  const basesOpts = useMemo(() => {
+    return (bases || [])
+      .filter(b => !tipo || b.Tipo === tipo)
+      .sort((a, b) => buildBaseLabel(a, { includeTipo: true }).localeCompare(buildBaseLabel(b, { includeTipo: true }), 'pt-BR'))
+  }, [bases, tipo])
+
+  const membrosOpts = useMemo(() => {
+    return (membros || [])
+      .filter(m => !tipo || m.Tipo === tipo)
+      .filter(m => !baseId || String(m.id_base || '') === String(baseId))
+      .sort((a, b) => (a.Membros || '').localeCompare(b.Membros || '', 'pt-BR'))
+  }, [membros, tipo, baseId])
+
+  const historico = useMemo(() => {
+    return notasAll
+      .filter(n => {
+        if (tipo && n._tipo !== tipo) return false
+        if (baseId && String(n.id_base || '') !== String(baseId)) return false
+        if (membroId && String(n.id_membros || '') !== String(membroId)) return false
+        return true
+      })
+      .map(n => {
+        const dataIso = toIsoDate(n.data || n.Data)
+        return {
+          id_base: n.id_base || '',
+          dataIso,
+          data: fmtDate(dataIso),
+          tipo: n._tipo,
+          prova: n.titulo || n.Titulo || 'Sem título',
+          base: n.Base || n.base || '—',
+          aluno: n.Membros || n.nome_aluno || '—',
+          nota: Number(n.Nota ?? n.nota ?? 0),
+          comunhao: n.Comunhao ?? n.comunhao ?? n.nota_1000 ?? n.Nota_1000 ?? '',
+          observacao: n.Observacoes || n.observacoes || '',
+        }
+      })
+      .filter(r => r.dataIso)
+      .sort((a, b) => a.dataIso.localeCompare(b.dataIso))
+  }, [notasAll, tipo, baseId, membroId])
+
+  const anoRef = useMemo(() => {
+    if (!historico.length) return String(new Date().getFullYear())
+    return historico[historico.length - 1].dataIso.slice(0, 4)
+  }, [historico])
+
+  const { data: configTrimestresAno = [] } = useQuery({
+    queryKey: ['configuracao_trimestres_individual', anoRef],
+    queryFn: () => db.getConfiguracaoTrimestres(Number(anoRef)),
+    enabled: Boolean(anoRef),
+  })
+
+  const porMes = useMemo(() => {
+    const map = {}
+    historico.forEach(r => {
+      const k = monthKey(r.dataIso)
+      if (!k) return
+      if (!map[k]) map[k] = { soma: 0, qtd: 0 }
+      map[k].soma += r.nota
+      map[k].qtd += 1
+    })
+
+    return Array.from({ length: 12 }, (_, i) => {
+      const month = String(i + 1).padStart(2, '0')
+      const key = `${anoRef}-${month}`
+      const found = map[key] || { soma: 0, qtd: 0 }
+      return {
+        key,
+        label: labelMonth(key),
+        media: found.qtd ? found.soma / found.qtd : 0,
+        qtd: found.qtd,
+      }
+    })
+  }, [historico, anoRef])
+
+  const porTrimestre = useMemo(() => {
+    const map = {}
+    historico.forEach(r => {
+      const k = quarterFromIso(r.dataIso)
+      if (!k) return
+      if (!map[k]) map[k] = { soma: 0, qtd: 0 }
+      map[k].soma += r.nota
+      map[k].qtd += 1
+    })
+
+    return Array.from({ length: 4 }, (_, i) => {
+      const quarter = i + 1
+      const key = `${anoRef}-T${quarter}`
+      const found = map[key] || { soma: 0, qtd: 0 }
+      return {
+        key,
+        label: labelQuarter(key),
+        media: found.qtd ? found.soma / found.qtd : 0,
+        qtd: found.qtd,
+      }
+    })
+  }, [historico, anoRef])
+
+  const porAno = useMemo(() => {
+    const map = {}
+    historico.forEach(r => {
+      const y = r.dataIso.slice(0, 4)
+      if (!map[y]) map[y] = { soma: 0, qtd: 0 }
+      map[y].soma += r.nota
+      map[y].qtd += 1
+    })
+    return Object.entries(map)
+      .map(([k, v]) => ({ key: k, label: k, media: v.qtd ? v.soma / v.qtd : 0, qtd: v.qtd }))
+      .sort((a, b) => a.key.localeCompare(b.key))
+  }, [historico])
+
+  const mediaGeral = useMemo(() => {
+    if (!historico.length) return 0
+    return historico.reduce((s, r) => s + r.nota, 0) / historico.length
+  }, [historico])
+
+  const mediaAnualRef = useMemo(() => {
+    const anoSelecionado = porAno.find(a => a.key === anoRef)
+    return anoSelecionado ? clampNota(anoSelecionado.media) : clampNota(mediaGeral)
+  }, [porAno, anoRef, mediaGeral])
+
+  const notaMilStats = useMemo(() => {
+    const trimestresCfg = Array.isArray(configTrimestresAno) ? configTrimestresAno : []
+    const cfgMap = Object.fromEntries(
+      trimestresCfg
+        .filter(t => Number(t.trimestre) >= 1 && Number(t.trimestre) <= 4)
+        .map(t => [Number(t.trimestre), t])
+    )
+
+    const simTrim = { 1: new Set(), 2: new Set(), 3: new Set(), 4: new Set() }
+    const simAnoRows = historico.filter(
+      r => r.dataIso.startsWith(`${anoRef}-`) && isSimValue(r.comunhao) && isSaturdayIso(r.dataIso)
+    )
+
+    simAnoRows.forEach(r => {
+      const month = Number(r.dataIso.slice(5, 7))
+      const q = Math.ceil(month / 3)
+      if (q >= 1 && q <= 4) simTrim[q].add(r.dataIso)
+    })
+
+    const trimRows = [1, 2, 3, 4].map(q => {
+      const cfg = cfgMap[q]
+      const fallbackStart = `${anoRef}-${String((q - 1) * 3 + 1).padStart(2, '0')}-01`
+      const fallbackEnd = `${anoRef}-${String(q * 3).padStart(2, '0')}-${q === 1 ? '31' : q === 2 ? '30' : q === 3 ? '30' : '31'}`
+      const sabadosRef = countSabadosInRange(cfg?.primeiro_sabado || fallbackStart, cfg?.ultimo_sabado || fallbackEnd)
+      const sim = simTrim[q]?.size || 0
+      const mediaPorSabado = sabadosRef > 0 ? sim / sabadosRef : 0
+      const percentual = sabadosRef > 0 ? (sim / sabadosRef) * 100 : 0
+
+      return {
+        trimestre: q,
+        sim,
+        sabadosRef,
+        mediaPorSabado,
+        percentual,
+      }
+    })
+
+    const simAno = trimRows.reduce((acc, r) => acc + r.sim, 0)
+    const sabadosAno = trimRows.reduce((acc, r) => acc + r.sabadosRef, 0)
+    const mediaAnoPorSabado = sabadosAno > 0 ? simAno / sabadosAno : 0
+    const percentualAno = sabadosAno > 0 ? (simAno / sabadosAno) * 100 : 0
+
+    return {
+      trimRows,
+      simAno,
+      sabadosAno,
+      mediaAnoPorSabado,
+      percentualAno,
+    }
+  }, [historico, anoRef, configTrimestresAno])
+
+  function exportarHistorico() {
+    if (!historico.length) return
+    downloadCSV(historico.map(r => ({
+      Data: r.data,
+      Tipo: r.tipo,
+      Aluno: r.aluno,
+      Base: r.base,
+      Prova: r.prova,
+      Nota: r.nota,
+      Observacao: r.observacao,
+    })), 'historico_individual_notas')
+  }
+
+  function exportarConsolidado() {
+    const linhas = [
+      ...porMes.map(r => ({ Periodo: 'Mes', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd })),
+      ...porTrimestre.map(r => ({ Periodo: 'Trimestre', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd })),
+      ...porAno.map(r => ({ Periodo: 'Ano', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd })),
+    ]
+    if (!linhas.length) return
+    downloadCSV(linhas, 'historico_individual_resumo')
+  }
+
+  function exportarPDF() {
+    if (!historico.length) {
+      toast.error('Selecione uma criança com histórico para exportar o PDF.')
+      return
+    }
+
+    const janela = window.open('', '_blank', 'width=1280,height=900')
+    if (!janela) {
+      toast.error('O navegador bloqueou a janela de impressão. Libere pop-up e tente novamente.')
+      return
+    }
+
+    const aluno = historico[0]?.aluno || 'Aluno'
+    const tipoAtual = tipo || historico[0]?.tipo || 'Todos'
+    const baseAtual = baseId
+      ? (basesOpts.find(b => String(b.id_base) === String(baseId))?.Base || 'Base selecionada')
+      : 'Todas'
+    const periodo = `${historico[0]?.data || '—'} a ${historico[historico.length - 1]?.data || '—'}`
+    const emitidoEm = new Date().toLocaleString('pt-BR')
+    const anual = clampNota(mediaAnualRef)
+    const score = clampNota(mediaGeral)
+    const scorePct = Math.round((score / 10) * 100)
+    const notaMilPct = Math.max(0, Math.min(100, notaMilStats.percentualAno))
+    const raio = 100
+    const semicirc = Math.PI * raio
+    const preenchimento = Math.max(8, (score / 10) * semicirc)
+
+    const nomeArquivo = `historico_${aluno}`
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase()
+
+    const chartHtml = (titulo, rows) => {
+      if (!rows.length) {
+        return `<section class="panel"><h3>${escapeHtml(titulo)}</h3><div class="empty">Sem dados neste período.</div></section>`
+      }
+
+      const safeRows = rows.map(r => ({ ...r, v: clampNota(r.media || 0) }))
+      const w = 540
+      const h = 190
+      const padL = 16
+      const padR = 16
+      const padT = 16
+      const padB = 34
+      const iw = w - padL - padR
+      const ih = h - padT - padB
+      const n = safeRows.length
+      const barW = Math.max(14, Math.min(42, Math.floor((iw - Math.max(0, n - 1) * 8) / n)))
+      const gap = n > 1 ? (iw - n * barW) / (n - 1) : 0
+
+      const annualY = padT + ih - (anual / 10) * ih
+
+      const bars = safeRows.map((r, i) => {
+        const x = padL + i * (barW + gap)
+        const barH = Math.max(6, (r.v / 10) * ih)
+        const y = padT + ih - barH
+        const labelX = x + barW / 2
+        return `
+          <g>
+            <rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barW}" height="${barH.toFixed(2)}" rx="6" fill="url(#barGrad)" />
+            <text x="${labelX.toFixed(2)}" y="${(h - 10).toFixed(2)}" text-anchor="middle" class="xlab">${escapeHtml(r.label)}</text>
+            <text x="${labelX.toFixed(2)}" y="${(y - 5).toFixed(2)}" text-anchor="middle" class="val">${r.v.toFixed(1)}</text>
+          </g>
+        `
+      }).join('')
+
+      const points = safeRows.map((r, i) => {
+        const x = padL + i * (barW + gap) + barW / 2
+        const y = padT + ih - (r.v / 10) * ih
+        return `${x.toFixed(2)},${y.toFixed(2)}`
+      }).join(' ')
+
+      return `
+        <section class="panel">
+          <h3>${escapeHtml(titulo)}</h3>
+          <svg viewBox="0 0 ${w} ${h}" class="chart" aria-hidden="true">
+            <defs>
+              <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="${isSoulMode ? '#FFB300' : '#8a5cff'}" />
+                <stop offset="100%" stop-color="${isSoulMode ? '#FF8F00' : '#2ce0f6'}" />
+              </linearGradient>
+            </defs>
+            <line x1="${padL}" y1="${annualY.toFixed(2)}" x2="${(w - padR).toFixed(2)}" y2="${annualY.toFixed(2)}" stroke="${isSoulMode ? '#8D5200' : '#b3bee7'}" stroke-width="1.3" stroke-dasharray="6 5" />
+            ${bars}
+            <polyline points="${points}" fill="none" stroke="${isSoulMode ? '#3E2000' : '#ffffff'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <div class="legend">
+            <span><i class="dot col"></i>Colunas</span>
+            <span><i class="dot dev"></i>Linha de Desenvolvimento</span>
+            <span><i class="dot yr"></i>Linha Anual (${anual.toFixed(1)})</span>
+          </div>
+        </section>
+      `
+    }
+
+    const historicoRows = historico
+      .map((r, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${escapeHtml(r.data)}</td>
+          <td>${escapeHtml(r.tipo)}</td>
+          <td>${escapeHtml(r.prova)}</td>
+          <td>${escapeHtml(r.base)}</td>
+          <td class="nota">${clampNota(r.nota).toFixed(1)}</td>
+          <td>${escapeHtml(r.observacao || '—')}</td>
+        </tr>
+      `)
+      .join('')
+
+    const notaMilRows = notaMilStats.trimRows
+      .map(r => `
+        <tr>
+          <td>${r.trimestre}º Trim</td>
+          <td>${r.sabadosRef}</td>
+          <td class="nota">${r.sim}</td>
+          <td>${r.percentual.toFixed(1)}%</td>
+        </tr>
+      `)
+      .join('')
+
+    const html = `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Relatório Individual - ${escapeHtml(aluno)}</title>
+  <style>
+    @page { size: A4; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      color: ${isSoulMode ? '#281400' : '#f2f5ff'};
+      background: ${isSoulMode
+        ? 'radial-gradient(circle at 20% -10%, rgba(255,179,0,.45) 0%, transparent 35%), radial-gradient(circle at 85% 0%, rgba(255,143,0,.4) 0%, transparent 30%), #FFF8E1'
+        : 'radial-gradient(circle at 20% -10%, #2d4cff 0%, transparent 35%), radial-gradient(circle at 85% 0%, #6a2bff 0%, transparent 30%), #050924'};
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .page {
+      border: 1px solid ${isSoulMode ? 'rgba(141,82,0,.35)' : '#2d3e7a'};
+      border-radius: 16px;
+      overflow: hidden;
+      background: ${isSoulMode
+        ? 'linear-gradient(180deg, rgba(255,248,225,.96), rgba(255,236,179,.96))'
+        : 'linear-gradient(180deg, rgba(14,22,61,.95), rgba(7,12,36,.98))'};
+      box-shadow: ${isSoulMode ? '0 20px 50px rgba(141,82,0,.2)' : '0 20px 50px rgba(3,5,20,.45)'};
+    }
+    .hero {
+      padding: 20px;
+      background: ${isSoulMode
+        ? 'linear-gradient(125deg, rgba(255,179,0,.34), rgba(255,143,0,.2))'
+        : 'linear-gradient(125deg, rgba(138,92,255,.34), rgba(44,224,246,.25))'};
+      border-bottom: 1px solid ${isSoulMode ? 'rgba(62,32,0,.15)' : 'rgba(255,255,255,.1)'};
+    }
+    .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; opacity: .78; }
+    .title { font-size: 30px; font-weight: 900; margin: 4px 0 8px; }
+    .meta { font-size: 12px; opacity: .88; display: flex; gap: 14px; flex-wrap: wrap; }
+    .content { padding: 16px; }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin-bottom: 12px; }
+    .card {
+      background: ${isSoulMode
+        ? 'linear-gradient(180deg, rgba(255,255,255,.75), rgba(255,248,225,.85))'
+        : 'linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.04))'};
+      border: 1px solid ${isSoulMode ? 'rgba(141,82,0,.2)' : 'rgba(255,255,255,.12)'};
+      border-radius: 12px;
+      padding: 10px;
+      min-height: 72px;
+    }
+    .card .num { font-size: 24px; font-weight: 900; }
+    .card .lbl { font-size: 11px; opacity: .82; margin-top: 2px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    .panel {
+      background: ${isSoulMode ? 'rgba(255,252,241,.88)' : 'rgba(10,17,49,.82)'};
+      border: 1px solid ${isSoulMode ? 'rgba(141,82,0,.22)' : 'rgba(255,255,255,.12)'};
+      border-radius: 12px;
+      padding: 10px;
+      break-inside: avoid;
+    }
+    .panel h3 { margin: 0 0 8px; font-size: 14px; }
+    .chart { width: 100%; height: 190px; display: block; }
+    .xlab { fill: ${isSoulMode ? '#6B3E00' : '#d6ddff'}; font-size: 10px; }
+    .val {
+      fill: ${isSoulMode ? '#3E2000' : '#ffffff'};
+      font-size: 10px;
+      font-weight: 700;
+      stroke: ${isSoulMode ? 'rgba(255,252,241,.88)' : 'rgba(10,17,49,.82)'};
+      stroke-width: 4px;
+      paint-order: stroke fill;
+      stroke-linejoin: round;
+    }
+    .legend { margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 10px; opacity: .88; }
+    .dot { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -2px; }
+    .dot.col { background: ${isSoulMode ? 'linear-gradient(180deg,#FFB300,#FF8F00)' : 'linear-gradient(180deg,#8a5cff,#2ce0f6)'}; }
+    .dot.dev { width: 14px; height: 2px; border-radius: 8px; background: #fff; }
+    .dot.yr { width: 14px; height: 2px; border-radius: 8px; background: ${isSoulMode ? 'repeating-linear-gradient(90deg,#8D5200 0 4px,transparent 4px 8px)' : 'repeating-linear-gradient(90deg,#b3bee7 0 4px,transparent 4px 8px)'}; }
+    .gauge-wrap {
+      display: grid;
+      grid-template-columns: 230px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+    .gauge {
+      width: 220px;
+      height: 130px;
+      display: block;
+      margin: 0 auto;
+    }
+    .g-desc { font-size: 12px; opacity: .9; }
+    .g-num { font-size: 34px; font-weight: 900; line-height: 1; color: ${isSoulMode ? '#8D5200' : '#71ebff'}; }
+    .g-bar { margin-top: 8px; height: 10px; border-radius: 999px; background: ${isSoulMode ? 'rgba(141,82,0,.15)' : 'rgba(255,255,255,.14)'}; overflow: hidden; }
+    .g-fill { height: 100%; width: ${scorePct}%; background: ${isSoulMode ? 'linear-gradient(90deg,#FFE082,#FF8F00)' : 'linear-gradient(90deg,#c9f4ff,#8a5cff)'}; }
+    .table-panel { margin-top: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th, td { border: 1px solid ${isSoulMode ? 'rgba(141,82,0,.2)' : 'rgba(255,255,255,.12)'}; padding: 7px 6px; }
+    th { background: ${isSoulMode ? 'rgba(255,179,0,.18)' : 'rgba(255,255,255,.08)'}; text-align: left; }
+    td.nota { text-align: center; font-weight: 800; color: ${isSoulMode ? '#8D5200' : '#7de9ff'}; }
+    .empty { font-size: 12px; opacity: .8; padding: 12px; border-radius: 8px; background: rgba(255,255,255,.06); }
+    .footer { margin-top: 8px; text-align: right; font-size: 10px; opacity: .75; }
+    @media print {
+      .page { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="kicker">Portal ANC • Relatório Individual</div>
+      <div class="title">Desempenho de ${escapeHtml(aluno)}</div>
+      <div class="meta">
+        <span><strong>Tipo:</strong> ${escapeHtml(tipoAtual)}</span>
+        <span><strong>Base:</strong> ${escapeHtml(baseAtual)}</span>
+        <span><strong>Período:</strong> ${escapeHtml(periodo)}</span>
+        <span><strong>Emissão:</strong> ${escapeHtml(emitidoEm)}</span>
+      </div>
+    </section>
+
+    <section class="content">
+      <div class="stats">
+        <article class="card"><div class="num">${historico.length}</div><div class="lbl">Lançamentos</div></article>
+        <article class="card"><div class="num">${score.toFixed(1)}</div><div class="lbl">Média Geral</div></article>
+        <article class="card"><div class="num">${porMes.filter(m => m.qtd > 0).length}/${porTrimestre.filter(t => t.qtd > 0).length}</div><div class="lbl">Meses / Trimestres</div></article>
+        <article class="card"><div class="num">${anual.toFixed(1)}</div><div class="lbl">Referência Anual</div></article>
+        <article class="card"><div class="num">${notaMilStats.simAno}</div><div class="lbl">Sábados com SIM (${notaMilPct.toFixed(1)}% freq.)</div></article>
+      </div>
+
+      <div class="grid2">
+        ${chartHtml('Desempenho por Mês', porMes)}
+        ${chartHtml('Desempenho por Trimestre', porTrimestre)}
+      </div>
+
+      <section class="panel" style="margin-top:12px;">
+        <h3>Velocímetro de Desempenho (0 a 10)</h3>
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 240 140" class="gauge" aria-hidden="true">
+            <defs>
+              <linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="${isSoulMode ? '#FFF3C1' : '#d8f6ff'}" />
+                <stop offset="60%" stop-color="${isSoulMode ? '#FFD35D' : '#7cefff'}" />
+                <stop offset="100%" stop-color="${isSoulMode ? '#FF8F00' : '#8a5cff'}" />
+              </linearGradient>
+            </defs>
+            <path d="M 20 120 A 100 100 0 0 1 220 120" stroke="${isSoulMode ? 'rgba(141,82,0,.18)' : 'rgba(255,255,255,.14)'}" stroke-width="18" fill="none" stroke-linecap="round" />
+            <path d="M 20 120 A 100 100 0 0 1 220 120" stroke="url(#gg)" stroke-width="18" fill="none" stroke-linecap="round" stroke-dasharray="${preenchimento} 999" />
+            <text x="20" y="136" fill="${isSoulMode ? '#6B3E00' : '#d7defd'}" font-size="11">0</text>
+            <text x="214" y="136" fill="${isSoulMode ? '#6B3E00' : '#d7defd'}" font-size="11">10</text>
+          </svg>
+          <div>
+            <div class="g-num">${score.toFixed(1)}</div>
+            <div class="g-desc">Quanto mais próximo de 10, maior a intensidade e consistência da evolução.</div>
+            <div class="g-bar"><div class="g-fill"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel table-panel">
+        <h3>Aluno Nota Mil • Comunhão por Sábados (${anoRef})</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Período</th>
+              <th>Sábados Ref.</th>
+              <th>Sábados com SIM</th>
+              <th>Frequência %</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${notaMilRows}
+            <tr>
+              <td><strong>Ano</strong></td>
+              <td><strong>${notaMilStats.sabadosAno}</strong></td>
+              <td class="nota"><strong>${notaMilStats.simAno}</strong></td>
+              <td><strong>${notaMilStats.percentualAno.toFixed(1)}%</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel table-panel">
+        <h3>Histórico Completo de Provas</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Data</th>
+              <th>Tipo</th>
+              <th>Prova</th>
+              <th>Base</th>
+              <th>Nota</th>
+              <th>Observação</th>
+            </tr>
+          </thead>
+          <tbody>${historicoRows}</tbody>
+        </table>
+      </section>
+
+      <div class="footer">Documento gerado automaticamente pelo Portal ANC.</div>
+    </section>
+  </main>
+</body>
+</html>`
+
+    janela.document.open()
+    janela.document.write(html)
+    janela.document.close()
+    janela.focus()
+    janela.document.title = `${nomeArquivo || 'historico_individual'}.pdf`
+    setTimeout(() => janela.print(), 350)
+  }
+
+  return (
+    <div className="fade-in">
+      <div className="card section">
+        <div className="card-header"><div className="card-title">👤 Histórico Individual de Notas</div></div>
+        <div className="card-body">
+          <div className="form-grid">
+            <div className="form-group">
+              <label>Tipo</label>
+              <select value={tipo} onChange={e => { setTipo(e.target.value); setBaseId(''); setMembroId('') }}>
+                <option value="">Todos</option>
+                <option value="G148 Teen">G148 Teen</option>
+                <option value="Soul+">Soul+</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Base</label>
+              <select value={baseId} onChange={e => { setBaseId(e.target.value); setMembroId('') }}>
+                <option value="">Todas</option>
+                {basesOpts.map(b => (
+                  <option key={b.id_base} value={b.id_base}>{buildBaseLabel(b, { includeTipo: true })}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Criança</label>
+              <select value={membroId} onChange={e => setMembroId(e.target.value)}>
+                <option value="">Selecione…</option>
+                {membrosOpts.map(m => <option key={m.id_membros} value={m.id_membros}>{m.Membros} ({m.Tipo || '—'})</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
+            <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(5,minmax(120px,1fr))', flex: 1 }}>
+              <div className="stat-card c1"><div className="stat-num">{historico.length}</div><div className="stat-label">Lançamentos</div></div>
+              <div className="stat-card c1"><div className="stat-num">{mediaGeral ? mediaGeral.toFixed(1) : '0.0'}</div><div className="stat-label">Média Geral</div></div>
+              <div className="stat-card c1"><div className="stat-num">{porMes.filter(m => m.qtd > 0).length}/{porTrimestre.filter(t => t.qtd > 0).length}</div><div className="stat-label">Meses / Trimestres</div></div>
+              <div className="stat-card c1"><div className="stat-num">{notaMilStats.simAno}</div><div className="stat-label">Sábados com SIM ({notaMilStats.percentualAno.toFixed(1)}% freq.)</div></div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-primary" onClick={exportarPDF}>🧾 Salvar PDF</button>
+              <button className="btn btn-outline" onClick={exportarHistorico}>📁 Exportar Histórico</button>
+              <button className="btn btn-outline" onClick={exportarConsolidado}>📁 Exportar Consolidado</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid-2" style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' }}>
+        <ColumnLineChart title="Desempenho por Mês" rows={porMes} annualLineValue={mediaAnualRef} variant={isSoulMode ? 'soul' : 'teen'} />
+        <ColumnLineChart title="Desempenho por Trimestre" rows={porTrimestre} annualLineValue={mediaAnualRef} variant={isSoulMode ? 'soul' : 'teen'} />
+      </div>
+
+      <GaugeChart title="Velocímetro de Desempenho (0 a 10)" value={mediaGeral} variant={isSoulMode ? 'soul' : 'teen'} />
+
+      <div className="card">
+        <div className="card-header"><div className="card-title">💯 Aluno Nota Mil • Comunhão por Sábados ({anoRef})</div></div>
+        <div className="table-wrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <table style={{ minWidth: 680 }}>
+            <thead>
+              <tr>
+                <th>Período</th>
+                <th style={{ textAlign: 'center' }}>Sábados Ref.</th>
+                <th style={{ textAlign: 'center' }}>Sábados com SIM</th>
+                <th style={{ textAlign: 'center' }}>Frequência %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {notaMilStats.trimRows.map(row => (
+                <tr key={`nota-mil-trim-${row.trimestre}`}>
+                  <td>{row.trimestre}º Trimestre</td>
+                  <td style={{ textAlign: 'center' }}>{row.sabadosRef}</td>
+                  <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--c2)' }}>{row.sim}</td>
+                  <td style={{ textAlign: 'center' }}>{row.percentual.toFixed(1)}%</td>
+                </tr>
+              ))}
+              <tr>
+                <td><strong>Ano</strong></td>
+                <td style={{ textAlign: 'center' }}><strong>{notaMilStats.sabadosAno}</strong></td>
+                <td style={{ textAlign: 'center', fontWeight: 900, color: 'var(--c2)' }}><strong>{notaMilStats.simAno}</strong></td>
+                <td style={{ textAlign: 'center' }}><strong>{notaMilStats.percentualAno.toFixed(1)}%</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header"><div className="card-title">🧾 Histórico Completo de Provas</div></div>
+        <div className="table-wrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <table style={{ minWidth: 760 }}>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Tipo</th>
+                <th>Criança</th>
+                <th>Base</th>
+                <th>Prova</th>
+                <th style={{ textAlign: 'center' }}>Nota</th>
+                <th>Observação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {historico.length === 0 ? (
+                <tr><td colSpan={7} style={{ textAlign: 'center', opacity: 0.6, padding: 20 }}>Selecione uma criança para visualizar o histórico.</td></tr>
+              ) : historico.map((r, i) => (
+                <tr key={`${r.dataIso}-${r.prova}-${i}`}>
+                  <td>{r.data}</td>
+                  <td>{r.tipo}</td>
+                  <td><strong>{r.aluno}</strong></td>
+                  <td>{r.base}</td>
+                  <td>{r.prova}</td>
+                  <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--c2)' }}>{r.nota}</td>
+                  <td style={{ fontSize: 12, opacity: 0.8 }}>{r.observacao || '—'}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

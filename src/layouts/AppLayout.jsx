@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { supabase } from '../api/supabase'
 
@@ -20,7 +20,6 @@ const NAV_TEEN = [
 ]
 
 const NAV_ADMIN = [
-  { to: '/relatorios',    icon: '📊', label: 'Relatórios Geral' },
   { to: '/admin/departamentos', icon: '🧭', label: 'Departamentos' },
   { to: '/admin/config', icon: '⚙️', label: 'Configurações Gerais' },
 ]
@@ -48,8 +47,14 @@ function getPageInfo(pathname) {
 
 export default function AppLayout() {
   const [connOk, setConnOk] = useState(null)
-  const { isAdmin, isAuditMode, toggleAuditMode, logout } = useAuthStore()
+  const { isAdmin, isAuditMode, adminUser, toggleAuditMode, logout } = useAuthStore()
   const location = useLocation()
+  const navigate = useNavigate()
+
+  async function handleLogout() {
+    await logout()
+    navigate('/', { replace: true })
+  }
 
   // Estado da sidebar (recolhida ou não) -- persiste no localStorage
   const [isCollapsed, setIsCollapsed] = useState(() => {
@@ -135,11 +140,15 @@ export default function AppLayout() {
             <span className="nav-icon">🏠</span>
             <span className="nav-label">Dashboard</span>
           </NavLink>
+          <NavLink to="/relatorios" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">📊</span>
+            <span className="nav-label">Relatórios Geral</span>
+          </NavLink>
         </nav>
 
         {/* Seção SOUL+ */}
         <nav className="nav-section" style={{ background: '#FFE082', borderBottom: '1px solid rgba(62,32,0,.15)' }}>
-          <div className="nav-section-label" style={{ color: '#3E2000', fontWeight: 800 }}>MINISTÉRIO SOUL+</div>
+          <div className="nav-section-label" style={{ color: '#3E2000', fontWeight: 800 }}>Pré Adolescentes - Soul+</div>
           {NAV_SOUL.map(item => (
             <NavLink
               key={item.to}
@@ -159,7 +168,7 @@ export default function AppLayout() {
 
         {/* Seção TEEN */}
         <nav className="nav-section" style={{ borderLeft: '4px solid var(--c1)', background: 'rgba(124,58,237,.03)' }}>
-          <div className="nav-section-label" style={{ color: 'var(--c1)' }}>Ministério G148 Teen</div>
+          <div className="nav-section-label" style={{ color: 'var(--c1)' }}>Adolescentes - G148 teen</div>
           {NAV_TEEN.map(item => (
             <NavLink
               key={item.to}
@@ -220,7 +229,7 @@ export default function AppLayout() {
 
             <button
               className="nav-item"
-              onClick={logout}
+              onClick={handleLogout}
               style={{ color: 'var(--bad)', marginTop: 8 }}
             >
               <span className="nav-icon">🚪</span>
@@ -282,7 +291,7 @@ export default function AppLayout() {
           </button>
 
           {isAdmin && (
-            <span className="topbar-badge badge-admin">Admin</span>
+            <span className="topbar-badge badge-admin">👤 {adminUser || 'Admin'}</span>
           )}
         </header>
 

@@ -7,6 +7,15 @@ import { db } from '../api/db'
 import { useAuthStore } from '../store/authStore'
 import { toInputDate, buildBaseLabel, fmtDate } from '../utils/helpers'
 
+function getLastSaturdayIso(ref = new Date()) {
+  const d = new Date(ref)
+  d.setHours(12, 0, 0, 0)
+  const day = d.getDay()
+  const diff = day === 6 ? 0 : (day + 1)
+  d.setDate(d.getDate() - diff)
+  return d.toISOString().slice(0, 10)
+}
+
 // ── Linha vazia padrão ───────────────────────────────────────────
 function newRow() {
   return {
@@ -36,29 +45,63 @@ function SimNao({ value, onChange, style }) {
 
 // ── Componente principal (reutilizado por Teen e Soul+) ───────────
 export function NotasForm({ tipo, sheetName }) {
-  const { data: bases }        = useTable('Bases')
-  const { data: provas }       = useTable('Provas')
-  const { data: todosMembros } = useTable('Membros')
+  const { data: bases = [] }        = useTable('Bases')
+  const { data: provas = [] }       = useTable('Provas')
+  const { data: todosMembros = [] } = useTable('Membros')
+  const { isAdmin, isAuditMode } = useAuthStore()
   const qc = useQueryClient()
 
+  function invalidateRankingCaches() {
+    qc.invalidateQueries({ queryKey: ['ranking_notas'] })
+    qc.invalidateQueries({ queryKey: ['ranking_registros'] })
+    qc.invalidateQueries({ queryKey: ['ranking_marcos'] })
+  }
 
+
+  const isSoul   = tipo === 'soul'
   const tipoBase  = tipo === 'soul' ? 'Soul+' : 'G148 Teen'
   const tableName = tipo === 'soul' ? 'Notas_Soul' : 'Notas_Teen'
+
+  function toIsoOnlyDate(value) {
+    if (!value) return ''
+    return toInputDate(value)
+  }
+
+  function getProvaId(p) {
+    return p?.id_provas ?? p?.id
+  }
+
+  function getNextSaturdayIso(ref = new Date()) {
+    const d = new Date(ref)
+    d.setHours(12, 0, 0, 0)
+    const day = d.getDay()
+    const diff = day === 6 ? 7 : (6 - day)
+    d.setDate(d.getDate() + diff)
+    return d.toISOString().slice(0, 10)
+  }
+
+  const canSeeAllProvas = isAdmin || isAuditMode
+  const lastSaturdayIso = useMemo(() => getLastSaturdayIso(), [])
+  const nextSaturdayIso = useMemo(() => getNextSaturdayIso(), [])
   
-  const basesOpts = bases
+  const basesOpts = (bases || [])
     .filter(b => b.Tipo === tipoBase)
     .sort((a, b) => buildBaseLabel(a, { includeTipo: true }).localeCompare(buildBaseLabel(b, { includeTipo: true })))
 
-  const provasOpts = provas
+  const provasOpts = (provas || [])
     .filter(p => p.tipo === tipoBase)
+    .filter(p => {
+      if (canSeeAllProvas) return true
+      const provaDateIso = toIsoOnlyDate(p.data || p.Data)
+      if (!provaDateIso) return false
+      return provaDateIso <= lastSaturdayIso
+    })
     .sort((a, b) => {
-      const nameA = (a.nome || '').toUpperCase()
-      const nameB = (b.nome || '').toUpperCase()
-      const isProvaA = nameA.includes('PROVA')
-      const isProvaB = nameB.includes('PROVA')
-      if (isProvaA && !isProvaB) return 1
-      if (!isProvaA && isProvaB) return -1
-      return (a.data || '').localeCompare(b.data || '')
+      const dateA = toIsoOnlyDate(a.data || a.Data) || '9999-12-31'
+      const dateB = toIsoOnlyDate(b.data || b.Data) || '9999-12-31'
+      const cmpDate = dateA.localeCompare(dateB)
+      if (cmpDate !== 0) return cmpDate
+      return (a.nome || '').localeCompare(b.nome || '')
     })
 
   const [meta, setMeta] = useState({
@@ -77,18 +120,71 @@ export function NotasForm({ tipo, sheetName }) {
   })
   const [rows, setRows] = useState([newRow()])
 
+  const anoDisc = useMemo(() => {
+    const source = meta.data || new Date().toISOString().slice(0, 10)
+    return Number(String(source).slice(0, 4))
+  }, [meta.data])
+
+  const { data: cartoesDiscipulado = [] } = useQuery({
+    queryKey: ['discipulos_cartoes_notas', meta.id_base, anoDisc],
+    queryFn: () => db.getDiscipulosCartoes(meta.id_base, anoDisc, null),
+    enabled: Boolean(meta.id_base && anoDisc),
+  })
+
+  const { data: status300ByMembro = {} } = useQuery({
+    queryKey: ['notas_300_status', meta.id_base, tipoBase, meta.data],
+    queryFn: () => db.getMembrosCom300Concluido(meta.id_base, tipoBase, meta.data),
+    enabled: Boolean(meta.id_base),
+  })
+
+  function hasRequiredCardMeta(card) {
+    return Boolean(card?.departamento?.trim() && card?.data_inicio)
+  }
+
+  function isCardActiveForDate(card, dateIso) {
+    if (!hasRequiredCardMeta(card) || !dateIso) return false
+    const checkDate = String(dateIso).slice(0, 10)
+    const start = String(card.data_inicio).slice(0, 10)
+    const end = card.data_fim ? String(card.data_fim).slice(0, 10) : null
+    if (checkDate < start) return false
+    if (end && checkDate > end) return false
+    return true
+  }
+
+  const activeDiscipuladoByMembro = useMemo(() => {
+    const map = {}
+    cartoesDiscipulado.forEach((card) => {
+      const membroId = String(card?.membro_id ?? '').trim()
+      if (!membroId) return
+      if (!isCardActiveForDate(card, meta.data || new Date().toISOString().slice(0, 10))) return
+      map[membroId] = true
+    })
+    return map
+  }, [cartoesDiscipulado, meta.data])
+
+  const hasDiscipuladoCardByMembro = useMemo(() => {
+    const map = {}
+    cartoesDiscipulado.forEach((card) => {
+      const membroId = String(card?.membro_id ?? '').trim()
+      if (!membroId) return
+      if (!hasRequiredCardMeta(card)) return
+      map[membroId] = true
+    })
+    return map
+  }, [cartoesDiscipulado])
+
   const setM = (k, v) => setMeta(m => ({ ...m, [k]: v }))
 
   // ── Membros filtrados pela base escolhida ─
-  const membros = todosMembros
+  const membros = (todosMembros || [])
     .filter(m => m.id_base === meta.id_base)
     .sort((a, b) => (a.Membros || '').localeCompare(b.Membros || ''))
 
   // ── Handlers ─────────────────────────────────────────────────
   function handleProvaChange(e) {
     const id = e.target.value
-    const prova = provasOpts.find(p => p.id_provas === id)
-    setMeta(m => ({ ...m, id_provas: id, data: prova ? toInputDate(prova.data || prova.Data) : '' }))
+    const prova = provasOpts.find(p => getProvaId(p) === id)
+    setMeta(m => ({ ...m, id_provas: id, data: prova ? toIsoOnlyDate(prova.data || prova.Data) : '' }))
   }
 
   function handleBaseChange(e) {
@@ -107,7 +203,7 @@ export function NotasForm({ tipo, sheetName }) {
     }))
 
     // Auto-preencher membros da base na tabela
-    const membrosDaBase = todosMembros
+    const membrosDaBase = (todosMembros || [])
       .filter(m => m.id_base === id_base)
       .sort((a, b) => (a.Membros || '').localeCompare(b.Membros || ''))
 
@@ -142,11 +238,50 @@ export function NotasForm({ tipo, sheetName }) {
       if (row._rid !== rid) return row
       if (k === 'id_membros') {
         const m = membros.find(mem => mem.id_membros === v)
-        return { ...row, id_membros: v, Membros: m?.Membros || '' }
+        const membroKey = String(v ?? '').trim()
+        const discipuladoValido = activeDiscipuladoByMembro[membroKey]
+        const possuiCartaoValido = Boolean(hasDiscipuladoCardByMembro[membroKey])
+        const status300 = status300ByMembro[membroKey] || { treinamento: false, estudo: false }
+        return {
+          ...row,
+          id_membros: v,
+          Membros: m?.Membros || '',
+          Discipulado: discipuladoValido ? 'Sim' : (possuiCartaoValido ? row.Discipulado : 'Não'),
+          TrezentosTrainamento: status300.treinamento ? 'Sim' : row.TrezentosTrainamento,
+          TrezentosEstudo: status300.estudo ? 'Sim' : row.TrezentosEstudo,
+        }
       }
       return { ...row, [k]: v }
     }))
   }
+
+  useEffect(() => {
+    setRows((current) => current.map((row) => {
+      const membroId = String(row.id_membros ?? '').trim()
+      const discipuladoAtivo = activeDiscipuladoByMembro[membroId]
+      const status300 = status300ByMembro[membroId] || { treinamento: false, estudo: false }
+
+      let next = row
+
+      if (discipuladoAtivo && row.Discipulado !== 'Sim') {
+        next = { ...next, Discipulado: 'Sim' }
+      }
+
+      const possuiCartao = hasDiscipuladoCardByMembro[membroId]
+      if (!possuiCartao && row.Discipulado !== 'Não' && membroId) {
+        next = { ...next, Discipulado: 'Não' }
+      }
+
+      if (status300.treinamento && next.TrezentosTrainamento !== 'Sim') {
+        next = { ...next, TrezentosTrainamento: 'Sim' }
+      }
+      if (status300.estudo && next.TrezentosEstudo !== 'Sim') {
+        next = { ...next, TrezentosEstudo: 'Sim' }
+      }
+
+      return next
+    }))
+  }, [activeDiscipuladoByMembro, hasDiscipuladoCardByMembro, status300ByMembro])
 
   function handleClear() {
     setMeta({ id_provas: '', data: '', responsavel: '', id_base: '', Base: '', Regiao: '', Distritos: '', Igrejas: '', id_regiao: '', id_distritos: '', id_igrejas: '' })
@@ -154,67 +289,118 @@ export function NotasForm({ tipo, sheetName }) {
   }
 
   // ── Validação ─────────────────────────────────────────────────
+  const provaSelecionada = provasOpts.find(p => getProvaId(p) === meta.id_provas)
+  const nomeProvaSelecionada = String(provaSelecionada?.nome || '').toLowerCase()
+  const soulExigeNota = isSoul && /\bprova\b|prova\s*bonus|b[oô]nus/.test(nomeProvaSelecionada)
+  const isRegistroSemanal = isSoul && meta.id_provas !== '' && /\bregistro\b/i.test(nomeProvaSelecionada)
+
+  function hasWeeklySoulAnswers(r) {
+    return [
+      r.Comunhao,
+      r.Verso,
+      r.Discipulado,
+      r.TrezentosTrainamento,
+      r.TrezentosEstudo,
+    ].some(v => String(v || '').trim() !== '')
+  }
+
   function isRowValid(r) {
+    if (r.Membros.trim().length === 0) return false
+
+    const temNota = String(r.Nota ?? '').trim() !== ''
     const n = Number(r.Nota)
-    return (
-      r.Membros.trim().length > 0 &&
-      r.Nota !== '' &&
-      Number.isFinite(n) &&
-      n >= 1 && n <= 10
-    )
+    const notaValida = temNota && Number.isFinite(n) && n >= 1 && n <= 10
+
+    if (soulExigeNota) return notaValida
+    if (isSoul) return hasWeeklySoulAnswers(r) || notaValida
+
+    return notaValida
   }
 
   const validRows = rows.filter(isRowValid)
   const metaOk   = meta.id_provas && meta.data && meta.responsavel.trim() && meta.id_base
+  const taskGroupLabel = isSoul ? 'Soul Task' : '300'
+  const taskTrainLabel = isSoul ? 'Soul Task Trein.' : '300 Trein.'
+  const taskStudyLabel = isSoul ? 'Soul Task Est.' : '300 Est.'
 
   // ── Salvar ────────────────────────────────────────────────────
   const save = useMutation({
     mutationFn: async () => {
-      const prova    = provasOpts.find(p => p.id_provas === meta.id_provas)
+      const prova    = provasOpts.find(p => getProvaId(p) === meta.id_provas)
       const id_lote  = crypto.randomUUID()
 
-      const dbRows = validRows.map(r => ({
-        // Cada aluno precisa de chave própria para evitar colisão de PK.
-        id_form:      crypto.randomUUID(),
-        id_lote,
-        tipo:         tipoBase,
-        prova_id:     meta.id_provas || null,
-        id_provas:    meta.id_provas,
-        base_id:      meta.id_base,
-        id_base:      meta.id_base,
-        aba:          tipo === 'soul' ? 'NOTAS_SOUL' : 'NOTAS',
-        data:         meta.data,
-        titulo:       prova?.nome || '',
-        responsavel:  meta.responsavel,
-        id_regiao:    meta.id_regiao,
-        Regiao:       meta.Regiao,
-        id_distritos: meta.id_distritos,
-        Distritos:    meta.Distritos,
-        id_igrejas:   meta.id_igrejas,
-        Igrejas:      meta.Igrejas,
-        Base:         meta.Base,
-        id_membros:            r.id_membros || null,
-        nome_aluno:            r.Membros,
-        Membros:               r.Membros,
-        nota:                  Number(r.Nota),
-        Nota:                  Number(r.Nota),
-        comunhao:              r.Comunhao || null,
-        Comunhao:              r.Comunhao || null,
-        verso:                 r.Verso || null,
-        Verso:                 r.Verso || null,
-        discipulado:           r.Discipulado || null,
-        trezentos_treinamento: r.TrezentosTrainamento || null,
-        trezentos_estudo:      r.TrezentosEstudo || null,
-        observacoes:           r.Observacoes.trim() || null,
-        Observacoes:           r.Observacoes.trim() || null,
-      }))
+      const dbRows = validRows.map(r => {
+        const notaInformada = String(r.Nota ?? '').trim() !== ''
+        const notaNumber = notaInformada ? Number(r.Nota) : null
+        return {
+          // Cada aluno precisa de chave própria para evitar colisão de PK.
+          id_form:      crypto.randomUUID(),
+          id_lote,
+          tipo:         tipoBase,
+          prova_id:     meta.id_provas || null,
+          id_provas:    meta.id_provas,
+          base_id:      meta.id_base,
+          id_base:      meta.id_base,
+          aba:          tipo === 'soul' ? 'NOTAS_SOUL' : 'NOTAS',
+          data:         meta.data,
+          titulo:       prova?.nome || '',
+          responsavel:  meta.responsavel,
+          id_regiao:    meta.id_regiao,
+          Regiao:       meta.Regiao,
+          id_distritos: meta.id_distritos,
+          Distritos:    meta.Distritos,
+          id_igrejas:   meta.id_igrejas,
+          Igrejas:      meta.Igrejas,
+          Base:         meta.Base,
+          id_membros:            r.id_membros || null,
+          nome_aluno:            r.Membros,
+          Membros:               r.Membros,
+          nota:                  notaNumber,
+          Nota:                  notaNumber,
+          comunhao:              r.Comunhao || null,
+          Comunhao:              r.Comunhao || null,
+          verso:                 r.Verso || null,
+          Verso:                 r.Verso || null,
+          discipulado:           r.Discipulado || null,
+          trezentos_treinamento: r.TrezentosTrainamento || null,
+          trezentos_estudo:      r.TrezentosEstudo || null,
+          observacoes:           r.Observacoes.trim() || null,
+          Observacoes:           r.Observacoes.trim() || null,
+        }
+      })
 
-      return db.insertNotasForm(dbRows, sheetName, tableName)
+      const saved = await db.insertNotasForm(dbRows, sheetName, tableName)
+      let desafiosSyncError = null
+
+      try {
+        await db.syncDesafiosAdministrativosFromNotas({
+          base_id: meta.id_base,
+          tipo: tipoBase,
+          data_sabado: meta.data,
+          rows: dbRows,
+          responsavel: meta.responsavel,
+        })
+      } catch (error) {
+        desafiosSyncError = error
+        console.warn('[Notas] Falha ao sincronizar desafios automaticamente apos salvar notas.', error)
+      }
+
+      return { saved, desafiosSyncError }
     },
-    onSuccess: (data) => {
-      const n = data.length
+    onSuccess: ({ saved, desafiosSyncError }) => {
+      const n = saved.length
       toast.success(`${n} nota${n !== 1 ? 's' : ''} salva${n !== 1 ? 's' : ''}! Base: ${meta.Base}`)
+      if (desafiosSyncError) {
+        toast((t) => (
+          <span>
+            Notas salvas, mas a sincronizacao automatica dos desafios falhou. Reabra a tela de desafios para reenviar.
+          </span>
+        ), { icon: '⚠️', duration: 6000 })
+      }
       qc.invalidateQueries({ queryKey: [tableName] })
+      qc.invalidateQueries({ queryKey: ['desafios_registros'] })
+      qc.invalidateQueries({ queryKey: ['desafios_registros_ano'] })
+      invalidateRankingCaches()
       handleClear()
     },
     onError: (err) => toast.error(`Erro ao salvar: ${err.message}`),
@@ -228,11 +414,13 @@ export function NotasForm({ tipo, sheetName }) {
     statusMsg   = `✅ ${validRows.length} aluno${validRows.length !== 1 ? 's' : ''} válido${validRows.length !== 1 ? 's' : ''} — pronto para salvar.`
   } else if (!metaOk) {
     statusMsg = 'Preencha Prova, Data, Responsável e Base para habilitar o envio.'
+  } else if (soulExigeNota) {
+    statusMsg = 'Para Prova/Prova Bônus no Soul+, informe nota válida (1–10).'
+  } else if (isSoul) {
+    statusMsg = 'No Soul+ semanal, registre as colunas de acompanhamento (Comunhão, Verso, Discipulado e Soul Task).'
   } else {
     statusMsg = 'Adicione pelo menos 1 aluno com nome e nota válida (1–10).'
   }
-
-  const isSoul = tipo === 'soul'
 
   // ── Render ────────────────────────────────────────────────────
   return (
@@ -246,11 +434,13 @@ export function NotasForm({ tipo, sheetName }) {
       {/* ── Cabeçalho do lote ── */}
       <div className="form-grid" style={{ marginBottom: 16 }}>
         <div className="form-group">
-          <label>Prova *</label>
+          <label>{isSoul ? 'Semana *' : 'Prova *'}</label>
             <select value={meta.id_provas} onChange={handleProvaChange}>
-              <option value="">Selecione a prova…</option>
+              <option value="">{isSoul ? 'Selecione a semana…' : 'Selecione a prova…'}</option>
               {provasOpts.map(p => (
-                <option key={p.id_provas} value={p.id_provas}>{p.nome}</option>
+                <option key={getProvaId(p)} value={getProvaId(p)}>
+                  {p.nome} {toIsoOnlyDate(p.data || p.Data) ? `- ${fmtDate(toIsoOnlyDate(p.data || p.Data))}` : ''}
+                </option>
               ))}
             </select>
         </div>
@@ -303,6 +493,12 @@ export function NotasForm({ tipo, sheetName }) {
         </div>
       )}
 
+      {!canSeeAllProvas && (
+        <div className="status-bar" style={{ marginBottom: 12 }}>
+          Provas liberadas até <strong>{fmtDate(lastSaturdayIso)}</strong>. A próxima liberação será em <strong>{fmtDate(nextSaturdayIso)}</strong>.
+        </div>
+      )}
+
       {/* ── Status geral ── */}
       <div className={`status-bar ${statusClass}`} style={{ marginBottom: 12 }}>
         {statusMsg}
@@ -325,8 +521,8 @@ export function NotasForm({ tipo, sheetName }) {
               <th style={{ width: 100, textAlign: 'center' }}>Nota *</th>
               <th style={{ width: 100, textAlign: 'center' }}>Comunhão</th>
               <th style={{ width: 100, textAlign: 'center' }}>VERSO</th>
-              <th style={{ width: 100, textAlign: 'center' }}>Discipulado</th>
-              <th colSpan={2} style={{ width: 200, textAlign: 'center' }}>300</th>
+              <th style={{ width: 120, textAlign: 'center' }}>Discipulado</th>
+              <th colSpan={2} style={{ width: 200, textAlign: 'center' }}>{taskGroupLabel}</th>
               <th style={{ minWidth: 150 }}>Observação</th>
               <th style={{ width: 36 }}></th>
             </tr>
@@ -337,9 +533,9 @@ export function NotasForm({ tipo, sheetName }) {
               <th style={{ textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>1 – 10</th>
               <th style={{ textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>Aluno nota 1000</th>
               <th></th>
-              <th></th>
+              <th style={{ textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2, lineHeight: 1.3 }}>Requer cartão com<br />depto. e data de início</th>
               <th style={{ width: 100, textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>Treinamento</th>
-              <th style={{ width: 100, textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>Est. Bíblico</th>
+              <th style={{ width: 100, textAlign: 'center', fontWeight: 400, fontSize: 11, paddingTop: 2 }}>{isSoul ? 'Estudo' : 'Est. Bíblico'}</th>
               <th></th>
               <th></th>
             </tr>
@@ -378,7 +574,9 @@ export function NotasForm({ tipo, sheetName }) {
                   <select
                     value={row.Nota}
                     onChange={e => updateRow(row._rid, 'Nota', e.target.value)}
-                    style={{ textAlign: 'center', width: '100%' }}
+                    style={{ textAlign: 'center', width: '100%', opacity: isRegistroSemanal ? 0.35 : 1 }}
+                    disabled={isRegistroSemanal}
+                    title={isRegistroSemanal ? 'Nota não se aplica a semanas de Registro' : undefined}
                   >
                     <option value="">—</option>
                     {[1,2,3,4,5,6,7,8,9,10].map(n => (
@@ -396,11 +594,38 @@ export function NotasForm({ tipo, sheetName }) {
                 </td>
 
                 <td>
-                  <SimNao value={row.Discipulado} onChange={e => updateRow(row._rid, 'Discipulado', e.target.value)} />
+                  {(() => {
+                    const membroKey = String(row.id_membros ?? '').trim()
+                    const podeUsarDiscipulado = Boolean(hasDiscipuladoCardByMembro[membroKey])
+                    const ativoNaData = Boolean(activeDiscipuladoByMembro[membroKey])
+                    return (
+                      <>
+                  <select
+                    value={row.Discipulado}
+                    onChange={e => updateRow(row._rid, 'Discipulado', e.target.value)}
+                    style={{ width: '100%', opacity: !podeUsarDiscipulado && row.id_membros ? 0.45 : 1 }}
+                    disabled={!podeUsarDiscipulado && Boolean(row.id_membros)}
+                  >
+                    <option value="">—</option>
+                    <option value="Não">Não</option>
+                    <option value="Sim" disabled={!podeUsarDiscipulado}>Sim</option>
+                  </select>
+                  {podeUsarDiscipulado && !ativoNaData && row.id_membros && (
+                    <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4 }}>
+                      Fora da vigência; ajuste manual permitido.
+                    </div>
+                  )}
+                      </>
+                    )
+                  })()}
                 </td>
 
                 <td>
-                  <SimNao value={row.TrezentosTrainamento} onChange={e => updateRow(row._rid, 'TrezentosTrainamento', e.target.value)} />
+                  <SimNao
+                    value={row.TrezentosTrainamento}
+                    onChange={e => updateRow(row._rid, 'TrezentosTrainamento', e.target.value)}
+                    style={row.TrezentosTrainamento === 'Sim' ? { opacity: 0.35, pointerEvents: 'none' } : undefined}
+                  />
                 </td>
 
                 <td>
@@ -453,9 +678,38 @@ export function NotasForm({ tipo, sheetName }) {
 function NotasHistorico({ tipo, tableName }) {
   const { data: bases }  = useTable('Bases')
   const { data: provas } = useTable('Provas')
-  const [filtros, setFiltros] = useState({ id_base: '', id_provas: '' })
+  const { isAdmin, isAuditMode } = useAuthStore()
+  const qc = useQueryClient()
 
-  const tipoBase = tipo === 'soul' ? 'Soul+' : 'G148 Teen'
+  function invalidateRankingCaches() {
+    qc.invalidateQueries({ queryKey: ['ranking_notas'] })
+    qc.invalidateQueries({ queryKey: ['ranking_registros'] })
+    qc.invalidateQueries({ queryKey: ['ranking_marcos'] })
+  }
+  const [filtros, setFiltros] = useState({ id_base: '', id_provas: '' })
+  const [editId, setEditId]   = useState(null)
+  const [editData, setEditData] = useState({})
+
+  const tipoBase        = tipo === 'soul' ? 'Soul+' : 'G148 Teen'
+  const taskTrainLabel  = tipo === 'soul' ? 'Soul Task Trein.' : '300 Trein.'
+  const taskStudyLabel  = tipo === 'soul' ? 'Soul Task Est.' : '300 Est.'
+  const canSeeAllProvas = isAdmin || isAuditMode
+  const lastSaturdayIso = useMemo(() => getLastSaturdayIso(), [])
+
+  const provasFiltradas = useMemo(() => (provas || [])
+    .filter(p => p.tipo === tipoBase)
+    .filter(p => {
+      if (canSeeAllProvas) return true
+      const d = toInputDate(p.data || p.Data)
+      return d && d <= lastSaturdayIso
+    })
+    .sort((a, b) => {
+      const dA = toInputDate(a.data || a.Data) || '0000-00-00'
+      const dB = toInputDate(b.data || b.Data) || '0000-00-00'
+      return dB.localeCompare(dA)
+    })
+  , [provas, tipoBase, canSeeAllProvas, lastSaturdayIso])
+
   const { data: notas = [], isLoading } = useQuery({
     queryKey: [tableName, 'all'],
     queryFn: () => db.getAll(tableName)
@@ -475,21 +729,98 @@ function NotasHistorico({ tipo, tableName }) {
       }
 
       if (filtros.id_provas && selectedProva) {
-        const noteProvaId    = String(n.id_provas ?? n.prova_id ?? '').trim()
-        const noteProvaTitulo = String(n.titulo   ?? n.Titulo   ?? '').trim()
-        const provaNome      = String(selectedProva.nome ?? selectedProva.Provas ?? '').trim()
-        const matchById   = noteProvaId    && noteProvaId    === String(filtros.id_provas).trim()
+        const noteProvaId     = String(n.id_provas ?? n.prova_id ?? '').trim()
+        const noteProvaTitulo = String(n.titulo    ?? n.Titulo   ?? '').trim()
+        const provaNome       = String(selectedProva.nome ?? selectedProva.Provas ?? '').trim()
+        const matchById   = noteProvaId     && noteProvaId     === String(filtros.id_provas).trim()
         const matchByName = noteProvaTitulo && provaNome && noteProvaTitulo === provaNome
         if (!matchById && !matchByName) return false
       }
 
       return true
     }).sort((a, b) => {
-      const da = a.data || a.Data || ''
+      const da  = a.data || a.Data || ''
       const db2 = b.data || b.Data || ''
       return db2.localeCompare(da)
     })
   }, [notas, filtros, bases, provas])
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }) => db.updateNota(tableName, id, data),
+    onSuccess: () => {
+      toast.success('Nota atualizada!')
+      qc.invalidateQueries({ queryKey: [tableName] })
+      invalidateRankingCaches()
+      setEditId(null)
+      setEditData({})
+    },
+    onError: (err) => toast.error(`Erro ao atualizar: ${err.message}`),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (nota) => {
+      await db.delete(tableName, nota.id)
+
+      const baseId = nota.id_base ?? nota.base_id
+      const dataSabado = nota.data ?? nota.Data
+      if (!baseId || !dataSabado) return true
+
+      const baseNome = nota.Base ?? nota.base ?? ''
+      const rows = tipo === 'soul'
+        ? await db.getNotasSoulPorBaseETrimestre(baseId, dataSabado, dataSabado, baseNome)
+        : await db.getNotasTeenPorBaseETrimestre(baseId, dataSabado, dataSabado, baseNome)
+
+      await db.syncDesafiosAdministrativosFromNotas({
+        base_id: baseId,
+        tipo: tipoBase,
+        data_sabado: dataSabado,
+        rows,
+        responsavel: nota.responsavel ?? nota.Responsavel ?? null,
+      })
+
+      return true
+    },
+    onSuccess: () => {
+      toast.success('Nota excluída.')
+      qc.invalidateQueries({ queryKey: [tableName] })
+      qc.invalidateQueries({ queryKey: ['desafios_registros'] })
+      qc.invalidateQueries({ queryKey: ['desafios_registros_ano'] })
+      invalidateRankingCaches()
+    },
+    onError: (err) => toast.error(`Erro ao excluir: ${err.message}`),
+  })
+
+  function confirmDelete(nota) {
+    const aluno = nota.nome_aluno || nota.Membros || 'aluno'
+    const prova = nota.titulo || nota.id_provas || 'prova'
+    if (window.confirm(`Excluir nota de "${aluno}" — ${prova}?\n\nEsta ação não pode ser desfeita.`)) {
+      deleteMutation.mutate(nota)
+    }
+  }
+
+  function startEdit(nota) {
+    setEditId(nota.id)
+    setEditData({
+      nota:                  nota.nota  ?? nota.Nota  ?? '',
+      Nota:                  nota.nota  ?? nota.Nota  ?? '',
+      comunhao:              nota.comunhao  ?? nota.Comunhao  ?? '',
+      Comunhao:              nota.comunhao  ?? nota.Comunhao  ?? '',
+      verso:                 nota.verso ?? nota.Verso ?? '',
+      Verso:                 nota.verso ?? nota.Verso ?? '',
+      discipulado:           nota.discipulado ?? '',
+      trezentos_treinamento: nota.trezentos_treinamento ?? '',
+      trezentos_estudo:      nota.trezentos_estudo ?? '',
+      observacoes:           nota.observacoes ?? nota.Observacoes ?? '',
+      Observacoes:           nota.observacoes ?? nota.Observacoes ?? '',
+    })
+  }
+
+  function setE(k, v) {
+    setEditData(d => {
+      const paired = { nota: 'Nota', Nota: 'nota', comunhao: 'Comunhao', Comunhao: 'comunhao', verso: 'Verso', Verso: 'verso', observacoes: 'Observacoes', Observacoes: 'observacoes' }
+      return paired[k] ? { ...d, [k]: v, [paired[k]]: v } : { ...d, [k]: v }
+    })
+  }
 
   return (
     <div className={`card section ${tipo === 'soul' ? 'theme-soul' : ''}`} style={{ marginTop: 24 }}>
@@ -512,19 +843,18 @@ function NotasHistorico({ tipo, tableName }) {
             <label>Filtrar por Prova</label>
             <select value={filtros.id_provas} onChange={e => setFiltros(f => ({ ...f, id_provas: e.target.value }))}>
               <option value="">Todas as provas…</option>
-              {(provas || [])
-                .filter(p => p.tipo === tipoBase)
-                .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''))
-                .map(p => (
-                  <option key={p.id_provas} value={p.id_provas}>{p.nome}</option>
-                ))}
+              {provasFiltradas.map(p => (
+                <option key={p.id_provas} value={p.id_provas}>
+                  {p.nome}{toInputDate(p.data || p.Data) ? ` - ${fmtDate(toInputDate(p.data || p.Data))}` : ''}
+                </option>
+              ))}
             </select>
           </div>
         </div>
 
         {isLoading ? <div className="spinner" /> : (
-          <div className="table-wrap">
-            <table>
+          <div className="table-wrap" style={{ overflowX: 'auto' }}>
+            <table style={{ minWidth: 950 }}>
               <thead>
                 <tr>
                   <th>Data</th>
@@ -532,25 +862,92 @@ function NotasHistorico({ tipo, tableName }) {
                   <th>Base</th>
                   <th>Prova</th>
                   <th style={{ textAlign: 'center' }}>Nota</th>
+                  <th style={{ textAlign: 'center' }}>Comunhão</th>
+                  <th style={{ textAlign: 'center' }}>Verso</th>
+                  <th style={{ textAlign: 'center' }}>Discipulado</th>
+                  <th style={{ textAlign: 'center' }}>{taskTrainLabel}</th>
+                  <th style={{ textAlign: 'center' }}>{taskStudyLabel}</th>
                   <th>Observação</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', opacity: 0.5, padding: 20 }}>Nenhum registro encontrado com estes filtros.</td></tr>
-                ) : filtered.map(n => (
-                  <tr key={n.id}>
-                    <td style={{ fontSize: 12 }}>{fmtDate(n.data || n.Data)}</td>
-                    <td style={{ fontWeight: 600 }}>{n.nome_aluno || n.Membros}</td>
-                    <td style={{ fontSize: 12 }}>{n.Base}</td>
-                    <td style={{ fontSize: 12 }}>{n.titulo || n.id_provas}</td>
-                    <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--c2)' }}>{n.nota ?? n.Nota}</td>
-                    <td style={{ fontSize: 11, opacity: 0.7 }}>{n.observacoes || n.Observacoes || '—'}</td>
-                    <td>
-                      <button className="btn-icon" onClick={() => alert('Função de correção em desenvolvimento para este histórico.')} title="Corrigir nota">✏️</button>
-                    </td>
-                  </tr>
-                ))}
+                  <tr><td colSpan={12} style={{ textAlign: 'center', opacity: 0.5, padding: 20 }}>Nenhum registro encontrado com estes filtros.</td></tr>
+                ) : filtered.map(n => {
+                  if (editId === n.id) {
+                    return (
+                      <tr key={n.id} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.04))' }}>
+                        <td style={{ fontSize: 12 }}>{fmtDate(n.data || n.Data)}</td>
+                        <td style={{ fontWeight: 600 }}>{n.nome_aluno || n.Membros}</td>
+                        <td style={{ fontSize: 12 }}>{n.Base}</td>
+                        <td style={{ fontSize: 12 }}>{n.titulo || n.id_provas}</td>
+                        <td>
+                          <select value={editData.nota} onChange={e => setE('nota', e.target.value)} style={{ width: '100%' }}>
+                            <option value="">—</option>
+                            {[1,2,3,4,5,6,7,8,9,10].map(v => <option key={v} value={v}>{v}</option>)}
+                          </select>
+                        </td>
+                        <td><SimNao value={editData.comunhao} onChange={e => setE('comunhao', e.target.value)} /></td>
+                        <td><SimNao value={editData.verso}    onChange={e => setE('verso',    e.target.value)} /></td>
+                        <td><SimNao value={editData.discipulado} onChange={e => setE('discipulado', e.target.value)} /></td>
+                        <td><SimNao value={editData.trezentos_treinamento} onChange={e => setE('trezentos_treinamento', e.target.value)} /></td>
+                        <td><SimNao value={editData.trezentos_estudo}      onChange={e => setE('trezentos_estudo',      e.target.value)} /></td>
+                        <td>
+                          <input
+                            value={editData.observacoes}
+                            onChange={e => setE('observacoes', e.target.value)}
+                            placeholder="Observação…"
+                            style={{ width: '100%' }}
+                          />
+                        </td>
+                        <td style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                          <button
+                            className="btn-icon"
+                            onClick={() => updateMutation.mutate({ id: n.id, data: editData })}
+                            disabled={updateMutation.isPending}
+                            title="Salvar"
+                          >💾</button>
+                          <button
+                            className="btn-icon"
+                            onClick={() => { setEditId(null); setEditData({}) }}
+                            title="Cancelar"
+                          >✖️</button>
+                          <button
+                            className="btn-icon danger"
+                            onClick={() => confirmDelete(n)}
+                            disabled={deleteMutation.isPending}
+                            title="Excluir"
+                          >🗑️</button>
+                        </td>
+                      </tr>
+                    )
+                  }
+                  return (
+                    <tr key={n.id}>
+                      <td style={{ fontSize: 12 }}>{fmtDate(n.data || n.Data)}</td>
+                      <td style={{ fontWeight: 600 }}>{n.nome_aluno || n.Membros}</td>
+                      <td style={{ fontSize: 12 }}>{n.Base}</td>
+                      <td style={{ fontSize: 12 }}>{n.titulo || n.id_provas}</td>
+                      <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--c2)' }}>{n.nota ?? n.Nota}</td>
+                      <td style={{ textAlign: 'center' }}>{(n.comunhao ?? n.Comunhao) || '—'}</td>
+                      <td style={{ textAlign: 'center' }}>{(n.verso    ?? n.Verso)    || '—'}</td>
+                      <td style={{ textAlign: 'center' }}>{n.discipulado || '—'}</td>
+                      <td style={{ textAlign: 'center' }}>{n.trezentos_treinamento || '—'}</td>
+                      <td style={{ textAlign: 'center' }}>{n.trezentos_estudo      || '—'}</td>
+                      <td style={{ fontSize: 11, opacity: 0.7 }}>{n.observacoes || n.Observacoes || '—'}</td>
+                      <td style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
+                        <button className="btn-icon" onClick={() => startEdit(n)} title="Editar nota">✏️</button>
+                        <button
+                          className="btn-icon danger"
+                          onClick={() => confirmDelete(n)}
+                          disabled={deleteMutation.isPending}
+                          title="Excluir nota"
+                        >🗑️</button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
             <p style={{ fontSize: 11, opacity: 0.5, marginTop: 8 }}>{filtered.length} registro{filtered.length !== 1 ? 's' : ''} encontrado{filtered.length !== 1 ? 's' : ''}.</p>

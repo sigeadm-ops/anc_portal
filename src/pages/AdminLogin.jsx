@@ -4,6 +4,7 @@ import { useAuthStore } from '../store/authStore'
 import toast from 'react-hot-toast'
 
 export default function AdminLogin() {
+  const [user, setUser] = useState('')
   const [pwd, setPwd] = useState('')
   const [loading, setLoading] = useState(false)
   const { login, init } = useAuthStore()
@@ -11,16 +12,16 @@ export default function AdminLogin() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!pwd.trim()) return
+    if (!user.trim() || !pwd.trim()) return
     setLoading(true)
     await init()
-    const ok = await login(pwd)
+    const ok = await login(user, pwd)
     setLoading(false)
     if (ok) {
-      toast.success('Bem-vindo, Admin!')
+      toast.success(`Bem-vindo, ${user}!`)
       navigate('/', { replace: true })
     } else {
-      toast.error('Senha incorreta.')
+      toast.error('Usuário ou senha incorretos.')
       setPwd('')
     }
   }
@@ -40,6 +41,18 @@ export default function AdminLogin() {
         </div>
 
         <form onSubmit={handleSubmit}>
+          <div className="form-group" style={{ marginBottom: 12 }}>
+            <label>Usuário</label>
+            <input
+              type="text"
+              value={user}
+              onChange={e => setUser(e.target.value)}
+              placeholder="Digite seu usuário"
+              autoFocus
+              autoComplete="username"
+            />
+          </div>
+
           <div className="form-group" style={{ marginBottom: 16 }}>
             <label>Senha</label>
             <input
@@ -47,7 +60,7 @@ export default function AdminLogin() {
               value={pwd}
               onChange={e => setPwd(e.target.value)}
               placeholder="Digite a senha"
-              autoFocus
+              autoComplete="current-password"
             />
           </div>
 
@@ -55,7 +68,7 @@ export default function AdminLogin() {
             type="submit"
             className="btn btn-primary"
             style={{ width: '100%', justifyContent: 'center' }}
-            disabled={loading || !pwd.trim()}
+            disabled={loading || !user.trim() || !pwd.trim()}
           >
             {loading ? <span className="spinner" /> : 'Entrar'}
           </button>

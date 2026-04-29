@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useUIStore } from '../store/uiStore'
+import { supabase } from '../api/supabase'
 
 function fmtDataBR(iso) {
   if (!iso) return '—'
@@ -23,11 +24,12 @@ const TABS = [
   { id: 'igrejas',    label: '⛪ Igrejas',    icon: '⛪' },
   { id: 'disciplos',  label: '📖 Discípulos', icon: '📖' },
   { id: 'diagnostico', label: '📊 Diagnóstico', icon: '🛡️' },
+  { id: 'logs',        label: '📋 Logs de Acesso', icon: '📋' },
 ]
 
 export default function AdminConfig() {
   const { min } = useParams()
-  const { isAuditMode, changePassword, logout } = useAuthStore()
+  const { isAdmin, isAuditMode, changePassword, logout } = useAuthStore()
   const [activeTab, setActiveTab] = useState('provas') // Inicia em Provas que é o mais comum
   const [pwd, setPwd] = useState({ cur: '', novo: '', conf: '' })
 
@@ -52,13 +54,14 @@ export default function AdminConfig() {
     }
     // Se for Configurações Gerais (/admin/config)
     return TABS.filter(t => !['provas', 'desafios', 'disciplos'].includes(t.id))
+    // logs só aparece em /admin/config geral
   }, [min])
 
   // Ajusta a aba ativa se ela não existir no contexto atual
   useEffect(() => {
     const validSoul = ['provas', 'desafios']
     const validTeen = ['provas', 'desafios', 'disciplos']
-    const validGeral = ['geral', 'trimestres', 'regioes', 'distritos', 'igrejas', 'diagnostico']
+    const validGeral = ['geral', 'trimestres', 'regioes', 'distritos', 'igrejas', 'diagnostico', 'logs']
     if (min === 'soul' && !validSoul.includes(activeTab)) {
       setActiveTab('provas')
     } else if (min === 'teen' && !validTeen.includes(activeTab)) {
@@ -83,7 +86,7 @@ export default function AdminConfig() {
       <div className="card section" style={{ marginBottom: 20 }}>
         <div className="card-header">
           <div className="card-title">⚙️ Painel de Administração Mestre</div>
-          {!isAuditMode && (
+          {!isAdmin && !isAuditMode && (
             <div className="chip chip-warn">Ative o cadeado 🔓 no topo para editar</div>
           )}
         </div>
@@ -133,6 +136,7 @@ export default function AdminConfig() {
         {activeTab === 'distritos' && <DimensionCRUD table="Distritos" pk="id_distritos" field="Distritos" label="Distrito" parentField="id_regiao" parentPkField="id_regiao" parentTable="Regiao" parentLabel="Regiao" />}
         {activeTab === 'igrejas' && <DimensionCRUD table="Igrejas" pk="id_igrejas" field="Igrejas" label="Igreja" parentField="id_distritos" parentPkField="id_distritos" parentTable="Distritos" parentLabel="Distritos" />}
         {activeTab === 'diagnostico' && <DiagnosticoConfig />}
+        {activeTab === 'logs' && <ActivityLogPanel />}
 
       </div>
     </div>
@@ -142,10 +146,17 @@ export default function AdminConfig() {
 // ── COMPONENTE: Gerenciamento de Provas ──────────────────────
 function ProvasCRUD({ filterMin }) {
   const showError = useUIStore(s => s.showError)
-  const { isAuditMode } = useAuthStore()
+  const { isAdmin, isAuditMode } = useAuthStore()
   const { data, isLoading, insert, update, remove } = useTable('Provas')
   const [form, setForm] = useState({ tipo: filterMin || '', nome: '', data: '' })
   const [editingId, setEditingId] = useState(null)
+
+  const canCrud = isAdmin || isAuditMode
+
+  useEffect(() => {
+    setForm({ tipo: filterMin || '', nome: '', data: '' })
+    setEditingId(null)
+  }, [filterMin])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -158,12 +169,16 @@ function ProvasCRUD({ filterMin }) {
       await insert.mutateAsync(form)
       toast.success('Prova cadastrada!')
     }
-    setForm({ tipo: '', nome: '', data: '' })
+    setForm({ tipo: filterMin || '', nome: '', data: '' })
   }
 
   const sorted = [...(data || [])]
     .filter(p => !filterMin || p.tipo === filterMin)
     .sort((a,b) => (a.data || '').localeCompare(b.data || ''))
+
+  function getProvaId(p) {
+    return p?.id ?? p?.id_provas
+  }
 
   return (
     <div className="dimension-crud">
@@ -184,7 +199,7 @@ function ProvasCRUD({ filterMin }) {
               <div className="form-group"><label>Data</label><input type="date" value={form.data} onChange={e => setForm({...form, data: e.target.value})} /></div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
-              <button type="submit" className="btn btn-primary" disabled={!isAuditMode}>Salvar Prova</button>
+              <button type="submit" className="btn btn-primary" disabled={!canCrud}>Salvar Prova</button>
             </div>
           </form>
         </div>
@@ -195,14 +210,14 @@ function ProvasCRUD({ filterMin }) {
             <thead><tr><th>Tipo</th><th>Nome</th><th>Data</th><th>Ações</th></tr></thead>
             <tbody>
               {sorted.map(p => (
-                <tr key={p.id}>
+                <tr key={getProvaId(p)}>
                   <td><span className={`chip ${p.tipo === 'Soul+' ? 'chip-soul' : 'chip-teen'}`}>{p.tipo}</span></td>
                   <td><strong>{p.nome}</strong></td>
                   <td>{fmtDataBR(p.data)}</td>
                   <td>
                     <div className="td-actions">
-                      <button className="btn-icon" onClick={() => { setForm({tipo: p.tipo, nome: p.nome, data: p.data}); setEditingId(p.id) }} disabled={!isAuditMode}>✏️</button>
-                      <button className="btn-icon danger" onClick={() => isAuditMode && confirm('Excluir?') && remove.mutateAsync(p.id)} disabled={!isAuditMode}>🗑️</button>
+                      <button className="btn-icon" onClick={() => { setForm({tipo: p.tipo, nome: p.nome, data: p.data}); setEditingId(getProvaId(p)) }} disabled={!canCrud}>✏️</button>
+                      <button className="btn-icon danger" onClick={() => canCrud && confirm('Excluir?') && remove.mutateAsync(getProvaId(p))} disabled={!canCrud}>🗑️</button>
                     </div>
                   </td>
                 </tr>
@@ -407,6 +422,7 @@ function TrimestresConfig() {
 // ── COMPONENTE: Catálogo de Desafios ────────────────────────
 const CATEGORIAS   = ['admin', 'da', 'estudo', 'midia', 'missao']
 const CAT_LABEL    = { admin: 'Administrativo', da: 'Desafio DA', estudo: 'Estudo', midia: 'Mídia', missao: 'Missão' }
+const CAT_PREFIX   = { admin: 'ADM', da: 'DA', estudo: 'EST', midia: 'MID', missao: 'MIS' }
 const RASTREAMENTOS = ['pontual', 'semanal']
 const PERIODICIDADES = ['trimestral', 'mensal', 'anual']
 
@@ -416,7 +432,57 @@ const NOMES_MESES_FULL = [
 ]
 
 function emptyDesafio(tipo = 'G148 Teen') {
-  return { codigo: '', nome: '', descricao: '', categoria: 'admin', rastreamento: 'pontual', periodicidade: 'trimestral', pontos_total: '', ordem: '', ativo: true, mes_ref: '', tipo }
+  return {
+    codigo: '',
+    nome: '',
+    descricao: '',
+    categoria: 'admin',
+    rastreamento: 'pontual',
+    periodicidade: 'trimestral',
+    pontos_total: '',
+    ativo: true,
+    mes_ref: '',
+    data_ocorrencia: '',
+    tipo,
+  }
+}
+
+function nextCodigoByCategoria(desafios, categoria, editingId = null) {
+  const prefix = CAT_PREFIX[categoria] ?? 'DES'
+  const regex = new RegExp(`^${prefix}_(\\d+)$`, 'i')
+  const maxNum = (desafios ?? [])
+    .filter(d => d.id !== editingId)
+    .reduce((acc, d) => {
+      const m = String(d.codigo ?? '').match(regex)
+      if (!m) return acc
+      return Math.max(acc, Number(m[1]))
+    }, 0)
+  return `${prefix}_${String(maxNum + 1).padStart(2, '0')}`
+}
+
+function computeOrdemByDate(desafios, dataOcorrencia, editingId = null) {
+  if (!dataOcorrencia) return 99
+
+  const all = (desafios ?? [])
+    .filter(d => d.id !== editingId)
+    .map(d => ({
+      id: d.id,
+      data_ocorrencia: d.data_ocorrencia || null,
+      ordem: Number(d.ordem ?? 99),
+    }))
+
+  all.push({ id: '__new__', data_ocorrencia: dataOcorrencia, ordem: 99 })
+
+  all.sort((a, b) => {
+    const aDate = a.data_ocorrencia || '9999-12-31'
+    const bDate = b.data_ocorrencia || '9999-12-31'
+    const cmpDate = aDate.localeCompare(bDate)
+    if (cmpDate !== 0) return cmpDate
+    return a.ordem - b.ordem
+  })
+
+  const idx = all.findIndex(i => i.id === '__new__')
+  return idx >= 0 ? idx + 1 : 99
 }
 
 function DesafiosCatalogoConfig({ filterMin }) {
@@ -428,6 +494,16 @@ function DesafiosCatalogoConfig({ filterMin }) {
   })
   const [form, setForm] = useState(emptyDesafio(filterMin || 'G148 Teen'))
   const [editingId, setEditingId] = useState(null)
+  const [search, setSearch] = useState('')
+
+  const codigoSugerido = useMemo(() => {
+    if (editingId) return form.codigo
+    return nextCodigoByCategoria(desafios, form.categoria)
+  }, [desafios, form.categoria, form.codigo, editingId])
+
+  const ordemAutomatica = useMemo(() => {
+    return computeOrdemByDate(desafios, form.data_ocorrencia, editingId)
+  }, [desafios, form.data_ocorrencia, editingId])
 
   const upsert = useMutation({
     mutationFn: (payload) => db.upsertDesafioCatalogo(payload),
@@ -477,7 +553,8 @@ function DesafiosCatalogoConfig({ filterMin }) {
       codigo: d.codigo, nome: d.nome, descricao: d.descricao ?? '',
       categoria: d.categoria ?? 'admin', rastreamento: d.rastreamento,
       periodicidade: d.periodicidade, pontos_total: String(d.pontos_total),
-      ordem: String(d.ordem ?? ''), ativo: d.ativo, mes_ref: d.mes_ref ? String(d.mes_ref) : '',
+      ativo: d.ativo, mes_ref: d.mes_ref ? String(d.mes_ref) : '',
+      data_ocorrencia: d.data_ocorrencia ?? '',
       tipo: d.tipo || 'G148 Teen'
     })
     setEditingId(d.id)
@@ -485,20 +562,57 @@ function DesafiosCatalogoConfig({ filterMin }) {
   }
 
   function handleSalvar() {
-    if (!form.codigo || !form.nome || !form.pontos_total) {
-      toast.error('Preencha código, nome e pontuação.'); return
+    const codigoFinal = editingId ? form.codigo : codigoSugerido
+    if (!codigoFinal || !form.nome || !form.pontos_total) {
+      toast.error('Preencha tipo de desafio, nome e pontuação.'); return
     }
     if (form.periodicidade === 'mensal' && !form.mes_ref) {
       toast.error('Para desafio mensal, defina o Mês de referência.'); return
     }
-    upsert.mutate({ id: editingId ?? undefined, ...form })
+    upsert.mutate({
+      id: editingId ?? undefined,
+      ...form,
+      codigo: codigoFinal,
+      ordem: ordemAutomatica,
+    })
   }
 
   function handleCancelar() { setForm(emptyDesafio(filterMin || 'G148 Teen')); setEditingId(null) }
 
   const filtered = useMemo(() => {
-    return desafios.filter(d => !filterMin || (d.tipo || 'G148 Teen') === filterMin)
-  }, [desafios, filterMin])
+    const searchNorm = search.trim().toLowerCase()
+
+    const base = desafios.filter(d => !filterMin || (d.tipo || 'G148 Teen') === filterMin)
+
+    const found = !searchNorm
+      ? base
+      : base.filter(d => {
+          const cat = CAT_LABEL[d.categoria] ?? d.categoria ?? ''
+          const dataBr = fmtDataBR(d.data_ocorrencia)
+          const text = [
+            d.codigo,
+            d.nome,
+            d.descricao,
+            d.tipo,
+            d.periodicidade,
+            d.rastreamento,
+            cat,
+            dataBr,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+          return text.includes(searchNorm)
+        })
+
+    return found.sort((a, b) => {
+      const aDate = a.data_ocorrencia || '9999-12-31'
+      const bDate = b.data_ocorrencia || '9999-12-31'
+      const cmpDate = aDate.localeCompare(bDate)
+      if (cmpDate !== 0) return cmpDate
+      return Number(a.ordem ?? 99) - Number(b.ordem ?? 99)
+    })
+  }, [desafios, filterMin, search])
 
   return (
     <div className="dimension-crud">
@@ -515,8 +629,14 @@ function DesafiosCatalogoConfig({ filterMin }) {
         <div className="card-body">
           <div className="form-grid">
             <div className="form-group">
-              <label>Código único *</label>
-              <input value={form.codigo} onChange={e => setF('codigo', e.target.value)} placeholder="ex: batismo_c1s1" disabled={Boolean(editingId)} />
+              <label>Tipo de Desafio *</label>
+              <select value={form.categoria} onChange={e => setF('categoria', e.target.value)}>
+                {CATEGORIAS.map(c => <option key={c} value={c}>{CAT_LABEL[c]}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Código automático</label>
+              <input value={codigoSugerido} disabled />
             </div>
             <div className="form-group" style={{ gridColumn: 'span 2' }}>
               <label>Nome *</label>
@@ -530,10 +650,8 @@ function DesafiosCatalogoConfig({ filterMin }) {
               </select>
             </div>
             <div className="form-group">
-              <label>Categoria</label>
-              <select value={form.categoria} onChange={e => setF('categoria', e.target.value)}>
-                {CATEGORIAS.map(c => <option key={c} value={c}>{CAT_LABEL[c]}</option>)}
-              </select>
+              <label>Data da ocorrência</label>
+              <input type="date" value={form.data_ocorrencia} onChange={e => setF('data_ocorrencia', e.target.value)} />
             </div>
             <div className="form-group">
               <label>Rastreamento</label>
@@ -563,8 +681,8 @@ function DesafiosCatalogoConfig({ filterMin }) {
               <input type="number" min="0" step="0.01" value={form.pontos_total} onChange={e => setF('pontos_total', e.target.value)} placeholder="200" />
             </div>
             <div className="form-group">
-              <label>Ordem</label>
-              <input type="number" min="0" value={form.ordem} onChange={e => setF('ordem', e.target.value)} placeholder="99" style={{ width: 80 }} />
+              <label>Posição automática</label>
+              <input type="number" value={ordemAutomatica} disabled style={{ width: 80 }} />
             </div>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}>
               <label>Descrição</label>
@@ -582,7 +700,19 @@ function DesafiosCatalogoConfig({ filterMin }) {
 
       {/* Lista */}
       <div className="card">
-        <div className="card-header"><div className="card-title">Catálogo de Desafios ({desafios.filter(d => !filterMin || d.tipo === filterMin).length})</div></div>
+        <div className="card-header">
+          <div className="card-title">Catálogo de Desafios ({filtered.length})</div>
+        </div>
+        <div className="card-body" style={{ paddingTop: 0 }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>Pesquisar desafio</label>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Buscar por código, nome, tipo, categoria ou data (dd/mm/aaaa)..."
+            />
+          </div>
+        </div>
         {isLoading ? (
           <div className="empty-state"><div className="spinner" /></div>
         ) : (
@@ -593,6 +723,7 @@ function DesafiosCatalogoConfig({ filterMin }) {
                   <th style={{ width: 30 }}>#</th>
                   <th>Nome</th>
                   <th>Tipo</th>
+                  <th>Ocorrência</th>
                   <th>Categoria</th>
                   <th>Rastreamento</th>
                   <th>Periodicidade</th>
@@ -602,7 +733,7 @@ function DesafiosCatalogoConfig({ filterMin }) {
                 </tr>
               </thead>
               <tbody>
-                {desafios.filter(d => !filterMin || d.tipo === filterMin).map(d => (
+                {filtered.map(d => (
                   <tr key={d.id} className={!d.ativo ? 'row-inactive' : ''}>
                     <td style={{ textAlign: 'center', fontSize: 11, opacity: 0.5 }}>{d.ordem}</td>
                     <td>
@@ -614,6 +745,7 @@ function DesafiosCatalogoConfig({ filterMin }) {
                         {d.tipo || 'G148 Teen'}
                       </span>
                     </td>
+                    <td>{fmtDataBR(d.data_ocorrencia)}</td>
                     <td><span className="chip chip-muted">{CAT_LABEL[d.categoria] ?? d.categoria}</span></td>
                     <td><span className={`chip ${d.rastreamento === 'semanal' ? 'chip-good' : 'chip-warn'}`}>{d.rastreamento}</span></td>
                     <td>
@@ -984,6 +1116,154 @@ function DiagnosticoConfig() {
             Clique no botão acima para iniciar a verificação.
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── COMPONENTE: Log de Atividades ────────────────────────────
+function ActivityLogPanel() {
+  const [logs, setLogs] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [filter, setFilter] = useState({ username: '', action: '' })
+  const [page, setPage] = useState(0)
+  const PAGE_SIZE = 50
+
+  async function loadLogs() {
+    setLoading(true)
+    try {
+      let q = supabase
+        .from('admin_activity_log')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
+      if (filter.username) q = q.ilike('username', `%${filter.username}%`)
+      if (filter.action) q = q.eq('action', filter.action)
+      const { data, error } = await q
+      if (error) throw error
+      setLogs(data || [])
+    } catch (e) {
+      toast.error('Erro ao carregar logs: ' + e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadLogs() }, [page, filter])
+
+  function fmtDt(iso) {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' })
+  }
+
+  const ACTION_LABELS = {
+    login: { label: 'Login', color: 'var(--ok)' },
+    login_failed: { label: 'Falha Login', color: 'var(--bad)' },
+    logout: { label: 'Logout', color: 'var(--text-secondary)' },
+    audit_on: { label: 'Auditoria ON', color: 'var(--warn)' },
+    audit_off: { label: 'Auditoria OFF', color: 'var(--text-muted)' },
+    change_password: { label: 'Senha alterada', color: 'var(--accent)' },
+    create: { label: 'Criou', color: 'var(--ok)' },
+    update: { label: 'Editou', color: 'var(--warn)' },
+    delete: { label: 'Excluiu', color: 'var(--bad)' },
+  }
+
+  function actionChip(action) {
+    const cfg = ACTION_LABELS[action] || { label: action, color: 'var(--text-secondary)' }
+    return (
+      <span style={{
+        display: 'inline-block', padding: '2px 8px', borderRadius: 20,
+        fontSize: 11, fontWeight: 700, background: cfg.color + '22', color: cfg.color,
+        border: `1px solid ${cfg.color}44`
+      }}>
+        {cfg.label}
+      </span>
+    )
+  }
+
+  return (
+    <div className="card section">
+      <div className="card-header">
+        <div className="card-title">📋 Log de Atividades</div>
+        <button className="btn btn-outline" onClick={() => { setPage(0); loadLogs() }} disabled={loading}>
+          {loading ? '⏳' : '🔄 Atualizar'}
+        </button>
+      </div>
+      <div className="card-body">
+
+        {/* Filtros */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 140 }}>
+            <label style={{ fontSize: 11 }}>Usuário</label>
+            <input
+              value={filter.username}
+              onChange={e => { setFilter(f => ({ ...f, username: e.target.value })); setPage(0) }}
+              placeholder="Filtrar por usuário"
+            />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 140 }}>
+            <label style={{ fontSize: 11 }}>Ação</label>
+            <select
+              value={filter.action}
+              onChange={e => { setFilter(f => ({ ...f, action: e.target.value })); setPage(0) }}
+            >
+              <option value="">Todas as ações</option>
+              <option value="login">Login</option>
+              <option value="login_failed">Falha Login</option>
+              <option value="logout">Logout</option>
+              <option value="audit_on">Auditoria ON</option>
+              <option value="audit_off">Auditoria OFF</option>
+              <option value="change_password">Senha alterada</option>
+              <option value="create">Criou</option>
+              <option value="update">Editou</option>
+              <option value="delete">Excluiu</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Tabela */}
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '30px 0', opacity: 0.5 }}>Carregando logs...</div>
+        ) : logs.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '30px 0', opacity: 0.5 }}>Nenhum log encontrado.</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Data / Hora</th>
+                  <th>Usuário</th>
+                  <th>Ação</th>
+                  <th>Entidade</th>
+                  <th>Descrição</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map(log => (
+                  <tr key={log.id}>
+                    <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{fmtDt(log.created_at)}</td>
+                    <td style={{ fontWeight: 600 }}>{log.username}</td>
+                    <td>{actionChip(log.action)}</td>
+                    <td style={{ fontSize: 12, opacity: 0.8 }}>{log.entity || '—'}</td>
+                    <td style={{ fontSize: 12, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.description || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Paginação */}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
+          <button className="btn btn-outline" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0 || loading}>
+            ← Anterior
+          </button>
+          <span style={{ alignSelf: 'center', fontSize: 13 }}>Página {page + 1}</span>
+          <button className="btn btn-outline" onClick={() => setPage(p => p + 1)} disabled={logs.length < PAGE_SIZE || loading}>
+            Próxima →
+          </button>
+        </div>
       </div>
     </div>
   )

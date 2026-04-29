@@ -2,8 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
-import { useIgrejas } from '../hooks/useIgrejas'
-import { today, fmtDate, formatCPF, buildBaseLabel, findDuplicateBaseGroups, formatBaseId } from '../utils/helpers'
+import { today, fmtDate, toInputDate, buildBaseLabel, findDuplicateBaseGroups, formatBaseId } from '../utils/helpers'
 
 const EMPTY_HEADER = {
   // UI — controle de cascata e tema
@@ -14,13 +13,12 @@ const EMPTY_HEADER = {
   // FK que vai para o banco
   id_base: '',
   Status: 'Ativo',
-  DataCad: today(),
 }
 
 const newRow = () => ({
   _rid: crypto.randomUUID(),
-  Membros: '', Nasc: '', Fone: '', Email: '',
-  Endereco: '', Responsavel: '', CPF: '', RG: '', Camiseta: '',
+  Membros: '', Responsavel: '', Email: '',
+  Endereco: '', RG: '', Camiseta: '',
 })
 
 export default function Membros() {
@@ -29,7 +27,6 @@ export default function Membros() {
 
   const { data, isLoading, insert, update, remove } = useTable('Membros', 'MEMBROS')
   const { data: bases } = useTable('Bases')
-  const geo = useIgrejas()
 
   const [header, setHeader] = useState({ ...EMPTY_HEADER, Tipo: currentTipo })
   const [staging, setStaging] = useState([newRow()])
@@ -44,23 +41,32 @@ export default function Membros() {
 
   const setH = (k, v) => setHeader(h => ({ ...h, [k]: v }))
 
-
-  // Cascata por IDs
-  const distritosOpts = geo.getDistritos(header.id_regiao)
-  const igrejasOpts = geo.getIgrejas(header.id_distritos)
   const duplicateBaseGroups = useMemo(() => findDuplicateBaseGroups(bases, { byTipo: true }), [bases])
 
   const baseById = useMemo(() => {
     return new Map((bases || []).map((base) => [String(base.id_base), base]))
   }, [bases])
 
-  // Bases filtradas pelo Tipo e pela igreja selecionada
+  // Bases filtradas apenas pelo tipo da URL (sem cascata manual)
   const basesFiltradas = (bases || [])
-    .filter(b =>
-      (b.Tipo === currentTipo) &&
-      (!header.id_igrejas || b.id_igrejas === header.id_igrejas)
-    )
+    .filter(b => b.Tipo === currentTipo)
     .sort((a, b) => (a.Base || '').localeCompare(b.Base || ''))
+
+  // Ao selecionar uma base, preenche geo automaticamente
+  function handleSelectBase(id_base) {
+    const base = (bases || []).find(b => String(b.id_base) === String(id_base))
+    if (base) {
+      setHeader(h => ({
+        ...h,
+        id_base,
+        id_regiao: base.id_regiao || '',
+        id_distritos: base.id_distritos || '',
+        id_igrejas: base.id_igrejas || '',
+      }))
+    } else {
+      setHeader(h => ({ ...h, id_base: '', id_regiao: '', id_distritos: '', id_igrejas: '' }))
+    }
+  }
 
   function addRows(n = 1) {
     setStaging(s => [...s, ...Array.from({ length: n }, newRow)])
@@ -84,15 +90,12 @@ export default function Membros() {
       try {
         await insert.mutateAsync({
           id_base: header.id_base,
-          Status: header.Status,
-          DataCad: header.DataCad,
+          Status: 'Ativo',
+          DataCad: today(),
           Membros: row.Membros.trim(),
-          Nasc: row.Nasc || null,
-          Fone: row.Fone.trim() || null,
+          Responsavel: row.Responsavel.trim() || null,
           Email: row.Email.trim() || null,
           Endereco: row.Endereco.trim() || null,
-          Responsavel: row.Responsavel.trim() || null,
-          CPF: row.CPF.trim() || null,
           RG: row.RG.trim() || null,
           Camiseta: row.Camiseta || null,
           Tipo: header.Tipo,
@@ -115,8 +118,11 @@ export default function Membros() {
 
   async function handleUpdate() {
     if (!editingMembro) return
-    const { id_membros, id_base, Membros, Nasc, Fone, Email, Endereco, Responsavel, CPF, RG, Camiseta, Status } = editingMembro
-    await update.mutateAsync({ id: id_membros, data: { id_base, Membros, Nasc, Fone, Email, Endereco, Responsavel, CPF, RG, Camiseta, Status } })
+    const { id_membros, id_base, Membros, Responsavel, Email, Endereco, RG, Camiseta, Status, DataCad, _originalStatus } = editingMembro
+    const statusMudou = (Status || 'Ativo') !== (_originalStatus || 'Ativo')
+    // Sempre salva em ISO (yyyy-mm-dd) para consistência no banco
+    const dataCadFinal = statusMudou ? today() : (toInputDate(DataCad) || today())
+    await update.mutateAsync({ id: id_membros, data: { id_base, Membros, Responsavel, Email, Endereco, RG, Camiseta, Status, DataCad: dataCadFinal } })
     toast.success('Membro atualizado!')
     setEditingMembro(null)
   }
@@ -140,7 +146,7 @@ export default function Membros() {
       }
       
       return !search ||
-      [m.Membros, m.Igrejas, m.Base, m.CPF, m.Responsavel, m.Fone]
+      [m.Membros, m.Igrejas, m.Base]
         .join(' ')
         .toLowerCase()
         .includes(search.toLowerCase())
@@ -152,7 +158,17 @@ export default function Membros() {
       {/* ── Formulário de cadastro em massa ── */}
       <div className="card section">
         <div className="card-header">
-          <div className="card-title">➕ Cadastrar Membros</div>
+          <div className="card-title">
+            ➕ Cadastrar Membros
+            <span style={{
+              marginLeft: 8, fontSize: 11, fontWeight: 700, padding: '2px 10px',
+              borderRadius: 20, background: type === 'soul' ? 'var(--soul-amber)' : 'rgba(124,58,237,.12)',
+              color: type === 'soul' ? 'var(--soul-brown)' : 'var(--c1)',
+              border: `1px solid ${type === 'soul' ? 'var(--soul-brown)44' : 'var(--c1)44'}`
+            }}>
+              {currentTipo}
+            </span>
+          </div>
         </div>
 
         <div style={{ padding: '20px 20px 0' }}>
@@ -162,50 +178,39 @@ export default function Membros() {
             </div>
           )}
 
-          <div className="form-grid" style={{ marginBottom: 16 }}>
-            <div className="form-group" style={{ opacity: 0.7 }}>
-              <label>Tipo</label>
-              <input value={currentTipo} readOnly disabled style={{ background: type === 'soul' ? 'rgba(62,32,0,0.05)' : 'rgba(255,255,255,0.05)', fontWeight: 800 }} />
-            </div>
-            <div className="form-group">
-              <label>Região</label>
-              <select value={header.id_regiao} onChange={e => { setH('id_regiao', e.target.value); setH('id_distritos', ''); setH('id_igrejas', ''); setH('id_base', '') }}>
-                <option value="">Selecione…</option>
-                {geo.regioes.map(r => <option key={r.id_regiao} value={r.id_regiao}>{r.Regiao}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Distrito</label>
-              <select value={header.id_distritos} onChange={e => { setH('id_distritos', e.target.value); setH('id_igrejas', ''); setH('id_base', '') }} disabled={!header.id_regiao}>
-                <option value="">Selecione…</option>
-                {distritosOpts.map(d => <option key={d.id_distritos} value={d.id_distritos}>{d.Distritos}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Igreja *</label>
-              <select value={header.id_igrejas} onChange={e => { setH('id_igrejas', e.target.value); setH('id_base', '') }} disabled={!header.id_distritos}>
-                <option value="">Selecione…</option>
-                {igrejasOpts.map(i => <option key={i.id_igrejas} value={i.id_igrejas}>{i.Igrejas}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
+          <div className="form-grid" style={{ gridTemplateColumns: '1fr', marginBottom: 16 }}>
+            <div className="form-group" style={{ maxWidth: 500 }}>
               <label>Base *</label>
-              <select value={header.id_base} onChange={e => setH('id_base', e.target.value)}>
-                <option value="">Selecione…</option>
-                {basesFiltradas.map(b => <option key={b.id_base} value={b.id_base}>{buildBaseLabel(b, { includeTipo: true })}</option>)}
+              <select
+                value={header.id_base}
+                onChange={e => handleSelectBase(e.target.value)}
+              >
+                <option value="">Selecione a base…</option>
+                {basesFiltradas.map(b => {
+                  const label = [b.Base, b.Igreja_Nome || b.Igrejas].filter(Boolean).join(' — ')
+                  return <option key={b.id_base} value={b.id_base}>{label}</option>
+                })}
               </select>
             </div>
-            <div className="form-group">
-              <label>Status</label>
-              <select value={header.Status} onChange={e => setH('Status', e.target.value)}>
-                <option>Ativo</option>
-                <option>Inativo</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Data de Cadastro</label>
-              <input type="date" value={header.DataCad} onChange={e => setH('DataCad', e.target.value)} />
-            </div>
+
+            {/* Info chips da base selecionada */}
+            {header.id_base && (() => {
+              const base = basesFiltradas.find(b => String(b.id_base) === String(header.id_base))
+              if (!base) return null
+              return (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: -8 }}>
+                  {[base.Regiao_Nome || base.Regiao, base.Distrito_Nome || base.Distritos, base.Igreja_Nome || base.Igrejas]
+                    .filter(Boolean)
+                    .map((info, i) => (
+                      <span key={i} style={{
+                        fontSize: 11, padding: '3px 10px', borderRadius: 20,
+                        background: 'var(--bg-alt)', border: '1px solid var(--border)',
+                        color: 'var(--text-secondary)'
+                      }}>{info}</span>
+                    ))}
+                </div>
+              )
+            })()}
           </div>
 
           <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
@@ -224,12 +229,9 @@ export default function Membros() {
             <thead>
               <tr>
                 <th style={{ width: 36 }}>#</th>
-                <th style={{ minWidth: 200 }}>Nome *</th>
-                <th style={{ width: 140 }}>Nascimento</th>
-                <th style={{ width: 150 }}>Telefone</th>
-                <th style={{ width: 130 }}>CPF</th>
+                <th style={{ minWidth: 200 }}>Nome Completo *</th>
+                <th style={{ minWidth: 220 }}>Responsavel - Nome Completo *</th>
                 <th style={{ width: 90 }}>Camiseta</th>
-                <th style={{ width: 170 }}>Responsável</th>
                 <th style={{ width: 40 }}></th>
               </tr>
             </thead>
@@ -238,16 +240,13 @@ export default function Membros() {
                 <tr key={row._rid}>
                   <td><span className="row-num">{String(i + 1).padStart(2, '0')}</span></td>
                   <td><input value={row.Membros} onChange={e => updateRow(row._rid, 'Membros', e.target.value)} placeholder="Nome completo" style={{ minWidth: 170 }} /></td>
-                  <td><input type="date" value={row.Nasc} onChange={e => updateRow(row._rid, 'Nasc', e.target.value)} /></td>
-                  <td><input value={row.Fone} onChange={e => updateRow(row._rid, 'Fone', e.target.value)} placeholder="(00) 00000-0000" /></td>
-                  <td><input value={row.CPF} onChange={e => updateRow(row._rid, 'CPF', formatCPF(e.target.value))} placeholder="000.000.000-00" /></td>
+                  <td><input value={row.Responsavel} onChange={e => updateRow(row._rid, 'Responsavel', e.target.value)} placeholder="Nome completo do responsável" style={{ minWidth: 190 }} /></td>
                   <td>
                     <select value={row.Camiseta} onChange={e => updateRow(row._rid, 'Camiseta', e.target.value)}>
                       <option value="">—</option>
                       {['P', 'M', 'G', 'GG', 'XG'].map(s => <option key={s}>{s}</option>)}
                     </select>
                   </td>
-                  <td><input value={row.Responsavel} onChange={e => updateRow(row._rid, 'Responsavel', e.target.value)} placeholder="Responsável" /></td>
                   <td><button className="btn-icon danger" onClick={() => removeRow(row._rid)}>🗑️</button></td>
                 </tr>
               ))}
@@ -286,16 +285,13 @@ export default function Membros() {
           </div>
         ) : (
           <div className="table-wrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-            <table style={{ minWidth: 1000 }}>
+            <table style={{ minWidth: 840 }}>
               <thead>
                 <tr>
                   <th style={{ minWidth: 160 }}>Nome</th>
                   <th style={{ minWidth: 160 }}>Base</th>
                   <th style={{ minWidth: 130 }}>Igreja</th>
-                  <th style={{ width: 120 }}>Nascimento</th>
-                  <th style={{ width: 130 }}>CPF</th>
-                  <th style={{ width: 130 }}>Fone</th>
-                  <th style={{ width: 140 }}>Responsável</th>
+                  <th style={{ width: 110 }}>Data Cad.</th>
                   <th style={{ width: 90 }}>Status</th>
                   <th style={{ width: 80 }}>Ações</th>
                 </tr>
@@ -314,14 +310,11 @@ export default function Membros() {
                         {m.Igrejas || baseById.get(String(m.id_base))?.Igreja_Nome || '—'}
                       </span>
                     </td>
-                    <td>{fmtDate(m.Nasc)}</td>
-                    <td>{m.CPF || '—'}</td>
-                    <td>{m.Fone || '—'}</td>
-                    <td>{m.Responsavel || '—'}</td>
+                    <td>{fmtDate(m.DataCad)}</td>
                     <td><span className={`chip ${m.Status === 'Ativo' ? 'chip-good' : 'chip-muted'}`}>{m.Status}</span></td>
                     <td>
                       <div className="td-actions">
-                        <button className="btn-icon" onClick={() => setEditingMembro({ ...m })}>✏️</button>
+                        <button className="btn-icon" onClick={() => setEditingMembro({ ...m, _originalStatus: m.Status || 'Ativo' })}>✏️</button>
                         <button className="btn-icon danger" onClick={() => handleDelete(m.id_membros, m.Membros)}>🗑️</button>
                       </div>
                     </td>
@@ -344,9 +337,10 @@ export default function Membros() {
             <div className="modal-body">
               <div className="form-grid">
                 {[
-                  ['Membros', 'Nome *', 'text'], ['Nasc', 'Nascimento', 'date'],
-                  ['Fone', 'Telefone', 'tel'], ['Email', 'E-mail', 'email'],
-                  ['Endereco', 'Endereço', 'text'], ['Responsavel', 'Responsável', 'text'],
+                  ['Membros', 'Nome Completo *', 'text'],
+                  ['Responsavel', 'Responsavel - Nome Completo *', 'text'],
+                  ['Email', 'E-mail', 'email'],
+                  ['Endereco', 'Endereço', 'text'],
                   ['RG', 'RG', 'text'],
                 ].map(([k, lbl, type]) => (
                   <div key={k} className="form-group">
@@ -354,10 +348,6 @@ export default function Membros() {
                     <input type={type} value={editingMembro[k] || ''} onChange={e => setEditingMembro(m => ({ ...m, [k]: e.target.value }))} />
                   </div>
                 ))}
-                <div className="form-group">
-                  <label>CPF</label>
-                  <input value={editingMembro.CPF || ''} onChange={e => setEditingMembro(m => ({ ...m, CPF: formatCPF(e.target.value) }))} />
-                </div>
                 <div className="form-group">
                   <label>Camiseta</label>
                   <select value={editingMembro.Camiseta || ''} onChange={e => setEditingMembro(m => ({ ...m, Camiseta: e.target.value }))}>
@@ -381,6 +371,10 @@ export default function Membros() {
                   <select value={editingMembro.Status || 'Ativo'} onChange={e => setEditingMembro(m => ({ ...m, Status: e.target.value }))}>
                     <option>Ativo</option><option>Inativo</option>
                   </select>
+                </div>
+                <div className="form-group">
+                  <label>Data de Status (automática)</label>
+                  <input type="date" value={toInputDate(editingMembro.DataCad)} readOnly disabled />
                 </div>
               </div>
             </div>

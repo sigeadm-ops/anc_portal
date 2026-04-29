@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { supabase } from '../api/supabase'
 
 async function sha256(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
@@ -9,11 +10,25 @@ async function sha256(str) {
 const HASH_KEY = 'anc_admin_hash_v1'
 const DEFAULT_PWD = import.meta.env.VITE_ADMIN_DEFAULT_PWD || 'admin2026'
 
+async function writeActivityLog(username, action, entity = null, description = null) {
+  try {
+    await supabase.from('admin_activity_log').insert({
+      username: username || 'admin',
+      action,
+      entity,
+      description,
+    })
+  } catch {
+    // Log falhou — não bloqueia o fluxo
+  }
+}
+
 export const useAuthStore = create(
   persist(
     (set, get) => ({
       isAdmin: false,
       isAuditMode: false,
+      adminUser: '',
       _hashReady: false,
 
       // Inicializa o hash padrão se não existir
@@ -25,29 +40,38 @@ export const useAuthStore = create(
         set({ _hashReady: true })
       },
 
-      async login(password) {
+      async login(username, password) {
         const hash = await sha256(password)
         const stored = localStorage.getItem(HASH_KEY)
         if (hash === stored) {
-          set({ isAdmin: true })
+          set({ isAdmin: true, adminUser: username.trim() || 'admin' })
+          await writeActivityLog(username.trim() || 'admin', 'login', null, 'Login na área administrativa')
           return true
         }
+        await writeActivityLog(username.trim() || 'desconhecido', 'login_failed', null, 'Tentativa de login com senha incorreta')
         return false
       },
 
-      logout() {
-        set({ isAdmin: false, isAuditMode: false })
+      async logout() {
+        const { adminUser } = get()
+        await writeActivityLog(adminUser || 'admin', 'logout', null, 'Saiu da área administrativa')
+        set({ isAdmin: false, isAuditMode: false, adminUser: '' })
+      },
+
+      async logActivity(action, entity = null, description = null) {
+        const { adminUser } = get()
+        await writeActivityLog(adminUser || 'admin', action, entity, description)
       },
 
       async toggleAuditMode(password) {
-        // Senha mestre para auditoria (pode ser diferente da admin)
-        // Por padrão, vamos usar a mesma, mas preparada para ser MASTER_PWD
         const hash = await sha256(password)
-        const stored = localStorage.getItem(HASH_KEY) // Aqui poderíamos usar um MASTER_HASH_KEY
+        const stored = localStorage.getItem(HASH_KEY)
+        const { adminUser } = get()
         
-        // Para o usuário, a "master password" solicitada
         if (password === 'master2026' || hash === stored) {
+          const next = !get().isAuditMode
           set(s => ({ isAuditMode: !s.isAuditMode }))
+          await writeActivityLog(adminUser || 'admin', next ? 'audit_on' : 'audit_off', null, 'Modo auditoria alternado')
           return true
         }
         return false
@@ -59,12 +83,13 @@ export const useAuthStore = create(
         if (curHash !== stored) return false
         const newHash = await sha256(newPwd)
         localStorage.setItem(HASH_KEY, newHash)
+        const { adminUser } = get()
+        await writeActivityLog(adminUser || 'admin', 'change_password', null, 'Senha administrativa alterada')
         return true
       },
     }),
     {
       name: 'anc_auth',
-      // Só persiste isAdmin na sessão via sessionStorage
       storage: {
         getItem: (key) => {
           const val = sessionStorage.getItem(key)
@@ -73,7 +98,7 @@ export const useAuthStore = create(
         setItem: (key, val) => sessionStorage.setItem(key, JSON.stringify(val)),
         removeItem: (key) => sessionStorage.removeItem(key),
       },
-      partialize: (state) => ({ isAdmin: state.isAdmin }),
+      partialize: (state) => ({ isAdmin: state.isAdmin, adminUser: state.adminUser }),
     }
   )
 )
