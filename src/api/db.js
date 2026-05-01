@@ -694,7 +694,9 @@ export const db = {
 
   // ── NOTAS: atualiza uma linha, com retry para colunas ausentes ──
   async updateNota(tableName, id, fields) {
-    let payload = { ...fields }
+    let payload = Object.fromEntries(
+      Object.entries(fields).map(([k, v]) => [k, v === '' ? null : v])
+    )
     for (let attempt = 0; attempt < 20; attempt++) {
       const { data, error } = await supabase
         .from(tableName)
@@ -1113,29 +1115,29 @@ export const db = {
   async getNotasTeenPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado, base_nome = null) {
     const COLS = 'id, id_membros, nome_aluno, data, nota, comunhao, verso, discipulado, trezentos_treinamento, trezentos_estudo, id_base, base'
 
-    let query = supabase
+    const primaryPromise = supabase
       .from('vw_notas_teen')
       .select(COLS)
       .gte('data', primeiro_sabado)
       .lte('data', ultimo_sabado)
+      .eq('id_base', base_id)
 
-    if (base_id) query = query.eq('id_base', base_id)
+    // Busca paralela por nome captura notas com id_base errado/nulo
+    const namePromise = base_id && base_nome
+      ? supabase.from('vw_notas_teen').select(COLS).gte('data', primeiro_sabado).lte('data', ultimo_sabado)
+      : Promise.resolve({ data: null, error: null })
 
-    const { data, error } = await query
-    if (error) throw error
+    const [primary, byName] = await Promise.all([primaryPromise, namePromise])
+    if (primary.error) throw primary.error
 
-    const rows = data ?? []
-    if (base_id && base_nome && rows.length === 0) {
-      const { data: data2, error: error2 } = await supabase
-        .from('vw_notas_teen')
-        .select(COLS)
-        .gte('data', primeiro_sabado)
-        .lte('data', ultimo_sabado)
-      if (!error2) {
-        const fallbackRows = (data2 ?? []).filter((row) => matchesBaseRow(row, base_id, base_nome))
-        if (fallbackRows.length > 0) return fallbackRows
-      }
+    const rows = primary.data ?? []
+    if (!byName.error && byName.data) {
+      const existingIds = new Set(rows.map(r => r.id))
+      const extra = byName.data.filter(row => !existingIds.has(row.id) && matchesBaseRow(row, base_id, base_nome))
+      if (extra.length > 0) return [...rows, ...extra]
+    }
 
+    if (rows.length === 0 && base_id && base_nome) {
       return fetchLegacyNotasFallback({
         legacyTableCandidates: ['Notas_Teen', 'notas_teen'],
         normalizeTable: 'Notas_Teen',
@@ -1152,29 +1154,29 @@ export const db = {
   async getNotasSoulPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado, base_nome = null) {
     const COLS = 'id, id_membros, nome_aluno, data, nota, comunhao, verso, discipulado, trezentos_treinamento, trezentos_estudo, id_base, base'
 
-    let query = supabase
+    const primaryPromise = supabase
       .from('vw_notas_soul')
       .select(COLS)
       .gte('data', primeiro_sabado)
       .lte('data', ultimo_sabado)
+      .eq('id_base', base_id)
 
-    if (base_id) query = query.eq('id_base', base_id)
+    // Busca paralela por nome captura notas com id_base errado/nulo
+    const namePromise = base_id && base_nome
+      ? supabase.from('vw_notas_soul').select(COLS).gte('data', primeiro_sabado).lte('data', ultimo_sabado)
+      : Promise.resolve({ data: null, error: null })
 
-    const { data, error } = await query
-    if (error) throw error
+    const [primary, byName] = await Promise.all([primaryPromise, namePromise])
+    if (primary.error) throw primary.error
 
-    const rows = data ?? []
-    if (base_id && base_nome && rows.length === 0) {
-      const { data: data2, error: error2 } = await supabase
-        .from('vw_notas_soul')
-        .select(COLS)
-        .gte('data', primeiro_sabado)
-        .lte('data', ultimo_sabado)
-      if (!error2) {
-        const fallbackRows = (data2 ?? []).filter((row) => matchesBaseRow(row, base_id, base_nome))
-        if (fallbackRows.length > 0) return fallbackRows
-      }
+    const rows = primary.data ?? []
+    if (!byName.error && byName.data) {
+      const existingIds = new Set(rows.map(r => r.id))
+      const extra = byName.data.filter(row => !existingIds.has(row.id) && matchesBaseRow(row, base_id, base_nome))
+      if (extra.length > 0) return [...rows, ...extra]
+    }
 
+    if (rows.length === 0 && base_id && base_nome) {
       return fetchLegacyNotasFallback({
         legacyTableCandidates: ['Notas_Soul', 'notas_soul'],
         normalizeTable: 'Notas_Soul',
