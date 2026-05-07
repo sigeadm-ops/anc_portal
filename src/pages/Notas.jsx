@@ -710,9 +710,10 @@ function NotasHistorico({ tipo, tableName }) {
     })
   , [provas, tipoBase, canSeeAllProvas, lastSaturdayIso])
 
-  const { data: notas = [], isLoading } = useQuery({
+  const { data: notas = [], isLoading, isError, refetch } = useQuery({
     queryKey: [tableName, 'all'],
-    queryFn: () => db.getAll(tableName)
+    queryFn: () => db.getAll(tableName),
+    retry: 2,
   })
 
   const filtered = useMemo(() => {
@@ -720,20 +721,28 @@ function NotasHistorico({ tipo, tableName }) {
     const selectedProva = filtros.id_provas ? (provas || []).find(p => p.id_provas === filtros.id_provas) : null
 
     return notas.filter(n => {
-      if (filtros.id_base && selectedBase) {
+      // Filtro de base: aplica sempre que id_base estiver definido,
+      // independente de selectedBase ser encontrado ou não.
+      if (filtros.id_base) {
         const noteBaseId   = String(n.id_base ?? n.base_id ?? '').trim()
         const noteBaseName = String(n.Base    ?? n.base    ?? '').trim()
-        const matchById   = noteBaseId   && noteBaseId   === String(filtros.id_base).trim()
-        const matchByName = noteBaseName && noteBaseName === String(selectedBase.Base ?? '').trim()
+        const filterBaseId = String(filtros.id_base).trim()
+        const matchById    = noteBaseId !== '' && noteBaseId === filterBaseId
+        const matchByName  = selectedBase
+          ? noteBaseName !== '' && noteBaseName === String(selectedBase.Base ?? '').trim()
+          : false
         if (!matchById && !matchByName) return false
       }
 
-      if (filtros.id_provas && selectedProva) {
+      if (filtros.id_provas) {
         const noteProvaId     = String(n.id_provas ?? n.prova_id ?? '').trim()
         const noteProvaTitulo = String(n.titulo    ?? n.Titulo   ?? '').trim()
-        const provaNome       = String(selectedProva.nome ?? selectedProva.Provas ?? '').trim()
-        const matchById   = noteProvaId     && noteProvaId     === String(filtros.id_provas).trim()
-        const matchByName = noteProvaTitulo && provaNome && noteProvaTitulo === provaNome
+        const filterProvaId   = String(filtros.id_provas).trim()
+        const provaNome       = selectedProva
+          ? String(selectedProva.nome ?? selectedProva.Provas ?? '').trim()
+          : ''
+        const matchById   = noteProvaId     !== '' && noteProvaId   === filterProvaId
+        const matchByName = noteProvaTitulo !== '' && provaNome !== '' && noteProvaTitulo === provaNome
         if (!matchById && !matchByName) return false
       }
 
@@ -852,7 +861,19 @@ function NotasHistorico({ tipo, tableName }) {
           </div>
         </div>
 
-        {isLoading ? <div className="spinner" /> : (
+        {isLoading ? (
+          <div style={{ padding: '32px 0', textAlign: 'center' }}>
+            <div className="spinner" style={{ margin: '0 auto 12px' }} />
+            <p style={{ opacity: 0.5, fontSize: 13 }}>Carregando notas…</p>
+          </div>
+        ) : isError ? (
+          <div style={{ padding: '32px 0', textAlign: 'center' }}>
+            <p style={{ opacity: 0.6, marginBottom: 12 }}>Não foi possível carregar os dados.</p>
+            <button className="btn btn-outline btn-sm" onClick={() => refetch()}>
+              🔄 Tentar novamente
+            </button>
+          </div>
+        ) : (
           <div className="table-wrap" style={{ overflowX: 'auto' }}>
             <table style={{ minWidth: 950 }}>
               <thead>

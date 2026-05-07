@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../store/authStore'
 import { supabase } from '../api/supabase'
+import { useRealtimeSync } from '../hooks/useRealtimeSync'
+import { useAppVersion } from '../hooks/useAppVersion'
 
 const NAV_SOUL = [
   { to: '/soul/bases',    icon: '⛪', label: 'Bases' },
@@ -47,9 +50,20 @@ function getPageInfo(pathname) {
 
 export default function AppLayout() {
   const [connOk, setConnOk] = useState(null)
+  const [refreshing, setRefreshing] = useState(false)
   const { isAdmin, isAuditMode, adminUser, toggleAuditMode, logout } = useAuthStore()
   const location = useLocation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
+
+  useRealtimeSync()
+  useAppVersion()
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true)
+    await queryClient.invalidateQueries()
+    setRefreshing(false)
+  }, [queryClient])
 
   async function handleLogout() {
     await logout()
@@ -281,8 +295,35 @@ export default function AppLayout() {
             <span className="topbar-title">{pageInfo.title}</span>
           </div>
 
+          {/* Botão de atualizar dados */}
+          <button
+            className="topbar-badge"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Atualizar dados da página"
+            style={{
+              cursor: refreshing ? 'default' : 'pointer',
+              border: 'none',
+              outline: 'none',
+              opacity: refreshing ? 0.6 : 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+            }}
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                animation: refreshing ? 'spin 0.7s linear infinite' : 'none',
+              }}
+            >
+              🔄
+            </span>
+            <span className="nav-label">Atualizar</span>
+          </button>
+
           {/* Badge modo auditoria */}
-          <button 
+          <button
             className={`topbar-badge badge-auditoria ${isAuditMode ? 'active' : ''}`}
             onClick={handleToggleAudit}
             style={{ cursor: 'pointer', border: 'none', outline: 'none' }}
