@@ -686,7 +686,9 @@ function NotasHistorico({ tipo, tableName }) {
     qc.invalidateQueries({ queryKey: ['ranking_registros'] })
     qc.invalidateQueries({ queryKey: ['ranking_marcos'] })
   }
-  const [filtros, setFiltros] = useState({ id_base: '', id_provas: '' })
+  const [filtros, setFiltros]           = useState({ id_base: '', id_provas: '' })
+  const [activeFiltros, setActiveFiltros] = useState({ id_base: '', id_provas: '' })
+  const [isFetching, setIsFetching]     = useState(false)
   const [editId, setEditId]   = useState(null)
   const [editData, setEditData] = useState({})
 
@@ -716,17 +718,26 @@ function NotasHistorico({ tipo, tableName }) {
     retry: 2,
   })
 
+  async function handlePesquisar() {
+    setIsFetching(true)
+    try {
+      qc.removeQueries({ queryKey: [tableName] })
+      await refetch()
+      setActiveFiltros({ ...filtros })
+    } finally {
+      setIsFetching(false)
+    }
+  }
+
   const filtered = useMemo(() => {
-    const selectedBase  = filtros.id_base   ? (bases  || []).find(b => b.id_base   === filtros.id_base)   : null
-    const selectedProva = filtros.id_provas ? (provas || []).find(p => p.id_provas === filtros.id_provas) : null
+    const selectedBase  = activeFiltros.id_base   ? (bases  || []).find(b => b.id_base   === activeFiltros.id_base)   : null
+    const selectedProva = activeFiltros.id_provas ? (provas || []).find(p => p.id_provas === activeFiltros.id_provas) : null
 
     return notas.filter(n => {
-      // Filtro de base: aplica sempre que id_base estiver definido,
-      // independente de selectedBase ser encontrado ou não.
-      if (filtros.id_base) {
+      if (activeFiltros.id_base) {
         const noteBaseId   = String(n.id_base ?? n.base_id ?? '').trim()
         const noteBaseName = String(n.Base    ?? n.base    ?? '').trim()
-        const filterBaseId = String(filtros.id_base).trim()
+        const filterBaseId = String(activeFiltros.id_base).trim()
         const matchById    = noteBaseId !== '' && noteBaseId === filterBaseId
         const matchByName  = selectedBase
           ? noteBaseName !== '' && noteBaseName === String(selectedBase.Base ?? '').trim()
@@ -734,10 +745,10 @@ function NotasHistorico({ tipo, tableName }) {
         if (!matchById && !matchByName) return false
       }
 
-      if (filtros.id_provas) {
+      if (activeFiltros.id_provas) {
         const noteProvaId     = String(n.id_provas ?? n.prova_id ?? '').trim()
         const noteProvaTitulo = String(n.titulo    ?? n.Titulo   ?? '').trim()
-        const filterProvaId   = String(filtros.id_provas).trim()
+        const filterProvaId   = String(activeFiltros.id_provas).trim()
         const provaNome       = selectedProva
           ? String(selectedProva.nome ?? selectedProva.Provas ?? '').trim()
           : ''
@@ -752,7 +763,7 @@ function NotasHistorico({ tipo, tableName }) {
       const db2 = b.data || b.Data || ''
       return db2.localeCompare(da)
     })
-  }, [notas, filtros, bases, provas])
+  }, [notas, activeFiltros, bases, provas])
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => db.updateNota(tableName, id, data),
@@ -835,10 +846,10 @@ function NotasHistorico({ tipo, tableName }) {
     <div className={`card section ${tipo === 'soul' ? 'theme-soul' : ''}`} style={{ marginTop: 24 }}>
       <div className="card-header"><div className="card-title">🔍 Consulta de Notas Lançadas ({tipoBase})</div></div>
       <div className="card-body">
-        <div className="form-grid" style={{ marginBottom: 16 }}>
-          <div className="form-group">
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+          <div className="form-group" style={{ margin: 0, minWidth: 200, flex: 1 }}>
             <label>Filtrar por Base</label>
-            <select value={filtros.id_base} onChange={e => setFiltros(f => ({ ...f, id_base: e.target.value }))}>
+            <select value={filtros.id_base} onChange={e => setFiltros(f => ({ ...f, id_base: e.target.value, id_provas: '' }))}>
               <option value="">Todas as bases…</option>
               {(bases || [])
                 .filter(b => b.Tipo === tipoBase)
@@ -848,7 +859,7 @@ function NotasHistorico({ tipo, tableName }) {
                 ))}
             </select>
           </div>
-          <div className="form-group">
+          <div className="form-group" style={{ margin: 0, minWidth: 200, flex: 1 }}>
             <label>Filtrar por Prova</label>
             <select value={filtros.id_provas} onChange={e => setFiltros(f => ({ ...f, id_provas: e.target.value }))}>
               <option value="">Todas as provas…</option>
@@ -858,6 +869,17 @@ function NotasHistorico({ tipo, tableName }) {
                 </option>
               ))}
             </select>
+          </div>
+          <div className="form-group" style={{ margin: 0, flexShrink: 0 }}>
+            <label style={{ visibility: 'hidden', display: 'block' }}>.</label>
+            <button
+              className="btn btn-primary"
+              onClick={handlePesquisar}
+              disabled={isFetching}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              {isFetching ? '⏳ Buscando…' : '🔍 Pesquisar'}
+            </button>
           </div>
         </div>
 
