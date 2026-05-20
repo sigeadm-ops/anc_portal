@@ -1917,12 +1917,10 @@ function BatismosTab({ baseId, ano, tipo, isAdmin, isAuditMode, isSoul }) {
                   </div>
                 )}
                 {b.obs && <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>{b.obs}</div>}
-                {isAdmin && (
-                  <div className="td-actions" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
-                    <button className="btn-icon" onClick={() => handleEditar(b)} title="Editar">✏️</button>
-                    <button className="btn-icon danger" onClick={() => confirm('Excluir registro?') && del.mutate(b.id)} title="Excluir">🗑️</button>
-                  </div>
-                )}
+                <div className="td-actions" style={{ marginTop: 10, justifyContent: 'flex-end' }}>
+                  <button className="btn-icon" onClick={() => handleEditar(b)} title="Editar">✏️</button>
+                  <button className="btn-icon danger" onClick={() => confirm('Excluir registro?') && del.mutate(b.id)} title="Excluir">🗑️</button>
+                </div>
               </div>
             </div>
           ))}
@@ -2111,12 +2109,10 @@ function FotosTab({ baseId, isAdmin, isAuditMode }) {
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{img.titulo}</div>
                 <div style={{ fontSize: 11, opacity: 0.5, marginTop: 2 }}>{img.data_upload}</div>
                 {img.observacao && <div style={{ fontSize: 11, opacity: 0.6, marginTop: 3 }}>{img.observacao}</div>}
-                {isAdmin && (
-                  <div className="td-actions" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
-                    <button className="btn-icon" onClick={() => { setEditItem(img); setForm({ titulo: img.titulo, data_upload: img.data_upload, observacao: img.observacao ?? '' }); setShowForm(true) }} title="Editar">✏️</button>
-                    <button className="btn-icon danger" onClick={() => confirm('Excluir imagem?') && del.mutate(img.id)} title="Excluir">🗑️</button>
-                  </div>
-                )}
+                <div className="td-actions" style={{ marginTop: 8, justifyContent: 'flex-end' }}>
+                  <button className="btn-icon" onClick={() => { setEditItem(img); setForm({ titulo: img.titulo, data_upload: img.data_upload, observacao: img.observacao ?? '' }); setShowForm(true) }} title="Editar">✏️</button>
+                  <button className="btn-icon danger" onClick={() => confirm('Excluir imagem?') && del.mutate(img.id)} title="Excluir">🗑️</button>
+                </div>
               </div>
             </div>
           ))}
