@@ -2211,8 +2211,8 @@ function ComparativoTab({ baseId, baseNome, tipo, cfgTrim, sabados, catalogo, re
       const temNotas = notasDia.length > 0
       const comunhaoAuto = temNotas && notasDia.every(notaTemComunhaoSim)
       const assidAuto = temNotas
-      // Manual só conta se houver notas lançadas — sem notas não há como validar assiduidade/comunhão.
-      const comunhaoManual = temNotas && comunhaoDesafio ? Boolean(getRegistro(comunhaoDesafio.id, sab)?.realizado) : false
+      // Comunhão manual é semanal e independe de notas — verifica registro direto.
+      const comunhaoManual = comunhaoDesafio ? Boolean(getRegistro(comunhaoDesafio.id, sab)?.realizado) : false
       const assidManual = temNotas && assiduidadeDesafio ? Boolean(getRegistro(assiduidadeDesafio.id, sab)?.realizado) : false
 
       return [sab, {
