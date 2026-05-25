@@ -2209,7 +2209,7 @@ function ComparativoTab({ baseId, baseNome, tipo, cfgTrim, sabados, catalogo, re
     const entries = sabados.map((sab) => {
       const notasDia = notasByDate[sab] ?? []
       const temNotas = notasDia.length > 0
-      const comunhaoAuto = temNotas && notasDia.every(notaTemComunhaoSim)
+      const comunhaoAuto = temNotas && notasDia.some(notaTemComunhaoSim)
       const assidAuto = temNotas
       // Comunhão manual é semanal e independe de notas — verifica registro direto.
       const comunhaoManual = comunhaoDesafio ? Boolean(getRegistro(comunhaoDesafio.id, sab)?.realizado) : false

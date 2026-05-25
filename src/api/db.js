@@ -797,7 +797,7 @@ export const db = {
     const desafiosAdmin = findDesafiosAdminSemanais(desafiosCatalogo)
     const assiduidadeOk = rows.length > 0
     const cartaoOk = rows.length > 0 && rows.every(notaPreencheCartao)
-    const comunhaoOk = rows.length > 0 && rows.every((nota) => isSimLike(nota?.comunhao ?? nota?.Comunhao))
+    const comunhaoOk = rows.length > 0 && rows.some((nota) => isSimLike(nota?.comunhao ?? nota?.Comunhao))
     const tasks = []
 
     desafiosAdmin.assiduidade.forEach((desafio) => {
