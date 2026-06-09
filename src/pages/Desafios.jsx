@@ -56,6 +56,11 @@ const NOMES_TRIM = { 1: '1º Trim', 2: '2º Trim', 3: '3º Trim', 4: '4º Trim' 
 const NOMES_MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 const NOMES_MESES_FULL = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 
+// ── Chave global de trava de trimestres ─────────────────────────
+// false = todos os usuários podem lançar em qualquer trimestre
+// true  = trimestres encerrados ficam bloqueados (somente admin/auditoria edita)
+const TRIMESTRE_LOCK_ATIVO = false
+
 const MAIN_TABS = [
   { id: 'desafios',    icon: '🏅', label: 'Desafios' },
   { id: 'comparativo', icon: '📊', label: 'Comparativo' },
@@ -166,10 +171,7 @@ export default function Desafios() {
 
   // ── Trava de trimestre encerrado ─────────────────────────────
   const isPastTrimestre = Boolean(cfgTrim && cfgTrim.ultimo_sabado < hojeStr)
-  const mesAtual = new Date().getMonth() + 1
-  const isTeenTrim1AbrilMaioOverride = currentTipo === 'G148 Teen' && trimestre === 1 && (mesAtual === 4 || mesAtual === 5)
-  const isSoulTrim1AbrilMaioOverride  = currentTipo === 'Soul+' && trimestre === 1 && (mesAtual === 4 || mesAtual === 5)
-  const isLocked = isPastTrimestre && !isAuditMode && !isAdmin && !isTeenTrim1AbrilMaioOverride && !isSoulTrim1AbrilMaioOverride
+  const isLocked = TRIMESTRE_LOCK_ATIVO && isPastTrimestre && !isAuditMode && !isAdmin
 
   // ── Dados da base ────────────────────────────────────────────
   const { data: registros = [] } = useQuery({

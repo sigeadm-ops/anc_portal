@@ -112,8 +112,12 @@ export default function Membros() {
 
   async function handleDelete(id, nome) {
     if (!confirm(`Excluir membro "${nome}"?`)) return
-    await remove.mutateAsync(id)
-    toast.success('Membro excluído.')
+    try {
+      await remove.mutateAsync(id)
+      toast.success('Membro excluído.')
+    } catch {
+      // erro tratado pelo onError do useTable (modal global)
+    }
   }
 
   async function handleUpdate() {

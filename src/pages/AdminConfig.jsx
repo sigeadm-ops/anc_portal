@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/authStore'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useUIStore } from '../store/uiStore'
+import { parseError } from '../lib/errorMessages'
 import { supabase } from '../api/supabase'
 
 function fmtDataBR(iso) {
@@ -253,7 +254,10 @@ function TrimestresConfig() {
       setForm({ trimestre: '', primeiro_sabado: '', ultimo_sabado: '' })
       setEditingId(null)
     },
-    onError: (e) => showError('Erro ao Salvar Trimestre', e.message),
+    onError: (e) => {
+      const { title, message, technicalInfo = null, contactAdmin = false } = parseError(e, 'configuracao_trimestres', 'insert')
+      showError(title, message, technicalInfo, contactAdmin)
+    },
   })
 
   const del = useMutation({
@@ -522,7 +526,8 @@ function DesafiosCatalogoConfig({ filterMin }) {
           'Execute o SQL: ALTER TABLE desafios_catalogo ADD COLUMN tipo TEXT DEFAULT \'G148 Teen\';'
         )
       } else {
-        showError('Erro ao Salvar Desafio', e.message)
+        const { title, message, technicalInfo = null, contactAdmin = false } = parseError(e, 'desafios_catalogo', 'insert')
+        showError(title, message, technicalInfo, contactAdmin)
       }
     },
   })
@@ -534,7 +539,10 @@ function DesafiosCatalogoConfig({ filterMin }) {
       qc.invalidateQueries({ queryKey: ['desafios_catalogo'] })
       toast.success('Desafio removido.')
     },
-    onError: (e) => showError('Erro ao Remover', e.message),
+    onError: (e) => {
+      const { title, message, technicalInfo = null, contactAdmin = false } = parseError(e, 'desafios_catalogo', 'delete')
+      showError(title, message, technicalInfo, contactAdmin)
+    },
   })
 
   const toggleAtivo = useMutation({
@@ -543,7 +551,10 @@ function DesafiosCatalogoConfig({ filterMin }) {
       qc.invalidateQueries({ queryKey: ['desafios_catalogo_all'] })
       qc.invalidateQueries({ queryKey: ['desafios_catalogo'] })
     },
-    onError: (e) => showError('Erro ao Alterar Status', e.message),
+    onError: (e) => {
+      const { title, message, technicalInfo = null, contactAdmin = false } = parseError(e, 'desafios_catalogo', 'update')
+      showError(title, message, technicalInfo, contactAdmin)
+    },
   })
 
   function setF(k, v) { setForm(f => ({ ...f, [k]: v })) }
@@ -1067,7 +1078,7 @@ function DiagnosticoConfig() {
       }
 
     } catch (e) {
-      showError('Erro no Diagnóstico', e.message)
+      showError('Erro no Diagnóstico', 'Não foi possível concluir a verificação do sistema. Entre em contato com o administrador.', e.message, true)
     } finally {
       setChecking(false)
       setResults(res)

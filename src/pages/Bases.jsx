@@ -128,9 +128,13 @@ export default function Bases() {
 
   async function handleDelete(id, nome) {
     if (!confirm(`Excluir base "${nome}"?`)) return
-    await remove.mutateAsync(id)
-    toast.success('Base excluída.')
-    if (editingId === id) cancelEdit()
+    try {
+      await remove.mutateAsync(id)
+      toast.success('Base excluída.')
+      if (editingId === id) cancelEdit()
+    } catch {
+      // erro tratado pelo onError do useTable (modal global)
+    }
   }
 
   const filtered = (data || [])

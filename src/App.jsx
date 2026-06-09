@@ -15,10 +15,13 @@ import AdminLogin from './pages/AdminLogin'
 
 import { useUIStore } from './store/uiStore'
 
-// Modal de Erro Global (Premium)
+// Modal de Erro Global
 function GlobalErrorModal() {
   const { error, clearError } = useUIStore()
   if (!error) return null
+
+  // Quebra de linha no message (ex.: texto com \n\n)
+  const lines = String(error.message || '').split('\n').filter(Boolean)
 
   return (
     <div className="error-modal-backdrop" onClick={clearError}>
@@ -28,11 +31,19 @@ function GlobalErrorModal() {
           <h2 className="error-modal-title">{error.title}</h2>
         </div>
         <div className="error-modal-message">
-          {error.message}
+          {lines.map((line, i) => (
+            <p key={i} style={{ margin: i === 0 ? '0 0 10px' : '0' }}>{line}</p>
+          ))}
         </div>
+        {error.contactAdmin && (
+          <div className="error-admin-notice">
+            <span className="error-admin-icon">👤</span>
+            Em caso de dúvidas, procure o <strong>administrador do sistema</strong>.
+          </div>
+        )}
         {error.technicalInfo && (
           <div className="error-technical">
-            <strong>Informação técnica:</strong><br/>
+            <strong>Detalhe técnico:</strong><br/>
             {error.technicalInfo}
           </div>
         )}

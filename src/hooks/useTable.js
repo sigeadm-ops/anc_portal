@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { db } from '../api/db'
 import toast from 'react-hot-toast'
+import { useUIStore } from '../store/uiStore'
+import { parseError } from '../lib/errorMessages'
 
 // ================================================================
 // Hook genérico de CRUD via Supabase + React Query
@@ -8,6 +10,12 @@ import toast from 'react-hot-toast'
 
 export function useTable(table, sheetName) {
   const qc = useQueryClient()
+  const showError = useUIStore.getState().showError
+
+  function handleError(err, action) {
+    const { title, message, technicalInfo = null, contactAdmin = false } = parseError(err, table, action)
+    showError(title, message, technicalInfo, contactAdmin)
+  }
 
   // ── Buscar todos ─────────────────────────────────────────────
   const query = useQuery({
@@ -21,9 +29,7 @@ export function useTable(table, sheetName) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [table] })
     },
-    onError: (err) => {
-      toast.error(`Erro ao salvar: ${err.message}`)
-    },
+    onError: (err) => handleError(err, 'insert'),
   })
 
   // ── Atualizar ────────────────────────────────────────────────
@@ -32,9 +38,7 @@ export function useTable(table, sheetName) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [table] })
     },
-    onError: (err) => {
-      toast.error(`Erro ao atualizar: ${err.message}`)
-    },
+    onError: (err) => handleError(err, 'update'),
   })
 
   // ── Deletar ──────────────────────────────────────────────────
@@ -43,9 +47,7 @@ export function useTable(table, sheetName) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [table] })
     },
-    onError: (err) => {
-      toast.error(`Erro ao excluir: ${err.message}`)
-    },
+    onError: (err) => handleError(err, 'delete'),
   })
 
   return {
