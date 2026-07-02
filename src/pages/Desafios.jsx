@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTable } from '../hooks/useTable'
@@ -68,6 +68,11 @@ const MAIN_TABS = [
   { id: 'batismos',   icon: '🕊️', label: 'Batismos' },
   { id: 'fotos',      icon: '🖼️', label: 'Fotos' },
 ]
+const MAIN_TAB_IDS = new Set(MAIN_TABS.map(t => t.id))
+
+function lastBaseStorageKey(type) {
+  return `desafios-last-base-${type === 'soul' ? 'soul' : 'teen'}`
+}
 
 const CATEGORIA_COR = {
   admin:  'var(--c2)',
@@ -94,6 +99,7 @@ function isCategoriaAutoAdministrativa(value) {
 export default function Desafios() {
   const { type } = useParams()
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const { isAdmin, isAuditMode } = useAuthStore()
   const { data: bases = [] }    = useTable('Bases')
@@ -108,7 +114,43 @@ export default function Desafios() {
   const [baseId, setBaseId]     = useState('')
   const [selectedBase, setSelectedBase] = useState(null)
   const [savingCells, setSavingCells]   = useState(new Set())
-  const [mainTab, setMainTab]   = useState('desafios')
+  // Aba vem do link do menu (ex.: /teen/desafios?tab=comparativo); sem
+  // parâmetro (ou valor inválido), cai no padrão "desafios".
+  const tabParam = searchParams.get('tab')
+  const [mainTab, setMainTab]   = useState(MAIN_TAB_IDS.has(tabParam) ? tabParam : 'desafios')
+
+  // Reage a cliques nos atalhos do menu lateral: como a rota (/teen/desafios)
+  // não muda, só o parâmetro ?tab=, o React Router mantém este componente
+  // montado — por isso a aba precisa ser resincronizada aqui, não só no
+  // useState inicial (que só roda na primeira montagem).
+  useEffect(() => {
+    setMainTab(MAIN_TAB_IDS.has(tabParam) ? tabParam : 'desafios')
+  }, [tabParam])
+
+  function selectTab(id) {
+    setMainTab(id)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (id === 'desafios') next.delete('tab')
+      else next.set('tab', id)
+      return next
+    }, { replace: true })
+  }
+
+  // Pré-seleciona a última base usada neste aparelho/navegador para este
+  // tipo (Soul+/Teen) — cada dispositivo guarda a sua própria escolha,
+  // não é compartilhado entre usuários nem sincronizado com o servidor.
+  useEffect(() => {
+    if (baseId || !bases.length) return
+    const savedId = localStorage.getItem(lastBaseStorageKey(type))
+    if (!savedId) return
+    const found = bases.find(b => (b.id_base ?? b.id) === savedId)
+    if (found) {
+      setBaseId(savedId)
+      setSelectedBase(found)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bases, type])
 
 
   // ── Filtros geográficos ──────────────────────────────────────
@@ -137,6 +179,8 @@ export default function Desafios() {
     const id = e.target.value
     setBaseId(id)
     setSelectedBase(basesOpts.find(b => (b.id_base ?? b.id) === id) ?? null)
+    if (id) localStorage.setItem(lastBaseStorageKey(type), id)
+    else localStorage.removeItem(lastBaseStorageKey(type))
   }
 
   function handleRegiaoChange(e) {
@@ -504,7 +548,7 @@ export default function Desafios() {
             {MAIN_TABS.map(t => (
               <button
                 key={t.id}
-                onClick={() => setMainTab(t.id)}
+                onClick={() => selectTab(t.id)}
                 style={{
                   padding: '12px 20px', background: 'none', border: 'none', cursor: 'pointer',
                   color: mainTab === t.id ? (type === 'soul' ? 'var(--soul-brown)' : 'var(--c1)') : (type === 'soul' ? 'rgba(62,32,0,.6)' : 'var(--text)'),

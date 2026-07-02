@@ -6,11 +6,24 @@ import { supabase } from '../api/supabase'
 import { useRealtimeSync } from '../hooks/useRealtimeSync'
 import { useAppVersion } from '../hooks/useAppVersion'
 
+// Sub-abas da página de Desafios, expostas como atalhos diretos no menu
+// lateral (a página continua no mesmo lugar — isso só abre direto na aba).
+const DESAFIOS_SUBTABS = [
+  { tab: 'comparativo', icon: '📊', label: 'Comparativo' },
+  { tab: 'discipulos',  icon: '📖', label: 'Discípulos' },
+  { tab: 'batismos',    icon: '🕊️', label: 'Batismos' },
+  { tab: 'fotos',       icon: '🖼️', label: 'Fotos' },
+]
+
+function desafiosSubmenu(base) {
+  return DESAFIOS_SUBTABS.map(s => ({ to: `${base}?tab=${s.tab}`, icon: s.icon, label: s.label }))
+}
+
 const NAV_SOUL = [
   { to: '/soul/bases',    icon: '⛪', label: 'Bases' },
   { to: '/soul/membros',  icon: '👥', label: 'Membros' },
   { to: '/soul/notas',    icon: '📋', label: 'Notas Soul+' },
-  { to: '/soul/desafios', icon: '🏅', label: 'Desafios' },
+  { to: '/soul/desafios', icon: '🏅', label: 'Desafios', submenu: desafiosSubmenu('/soul/desafios') },
   { to: '/soul/ranking',  icon: '🏆', label: 'Ranking' },
 ]
 
@@ -18,7 +31,7 @@ const NAV_TEEN = [
   { to: '/teen/bases',    icon: '⛪', label: 'Bases' },
   { to: '/teen/membros',  icon: '👥', label: 'Membros' },
   { to: '/teen/notas',    icon: '📋', label: 'Notas Teen' },
-  { to: '/teen/desafios', icon: '🏅', label: 'Desafios' },
+  { to: '/teen/desafios', icon: '🏅', label: 'Desafios', submenu: desafiosSubmenu('/teen/desafios') },
   { to: '/teen/ranking',  icon: '🏆', label: 'Ranking' },
 ]
 
@@ -33,6 +46,72 @@ const PAGE_TITLES = {
   '/relatorios': { icon: '📊', title: 'Relatório Geral' },
   '/admin/departamentos': { icon: '🧭', title: 'Departamentos do Discipulado' },
   '/admin/config': { icon: '⚙️', title: 'Configurações Admin' },
+}
+
+// Item de menu com submenu opcional (usado por Desafios: Comparativo,
+// Discípulos, Batismos, Fotos). O link principal navega normalmente; a
+// setinha só expande/recolhe a lista de atalhos, sem navegar.
+function NavItemWithSubmenu({ item, expanded, onToggleExpand, isSubmenuItemActive, soulStyle = false }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'stretch' }}>
+        <NavLink
+          to={item.to}
+          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+          style={({ isActive }) => ({
+            flex: 1,
+            ...(soulStyle ? {
+              color: '#3E2000',
+              background: isActive ? 'rgba(62,32,0,.1)' : 'transparent',
+              fontWeight: isActive ? 800 : 500,
+            } : {}),
+          })}
+        >
+          <span className="nav-icon">{item.icon}</span>
+          <span className="nav-label">{item.label}</span>
+        </NavLink>
+        {item.submenu && (
+          <button
+            type="button"
+            onClick={() => onToggleExpand(item.to)}
+            aria-label={expanded ? 'Recolher atalhos' : 'Expandir atalhos'}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '0 14px', color: soulStyle ? '#3E2000' : 'inherit', opacity: 0.7,
+            }}
+          >
+            {expanded ? '▾' : '▸'}
+          </button>
+        )}
+      </div>
+      {item.submenu && expanded && (
+        <div>
+          {item.submenu.map(sub => {
+            const active = isSubmenuItemActive(sub.to)
+            return (
+              <NavLink
+                key={sub.to}
+                to={sub.to}
+                className={`nav-item ${active ? 'active' : ''}`}
+                style={{
+                  paddingLeft: 44,
+                  fontSize: 13,
+                  ...(soulStyle ? {
+                    color: '#3E2000',
+                    background: active ? 'rgba(62,32,0,.1)' : 'transparent',
+                    fontWeight: active ? 800 : 500,
+                  } : {}),
+                }}
+              >
+                <span className="nav-icon">{sub.icon}</span>
+                <span className="nav-label">{sub.label}</span>
+              </NavLink>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function getPageInfo(pathname) {
@@ -55,6 +134,32 @@ export default function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+
+  // Itens de menu com submenu (ex.: Desafios) começam expandidos se a rota
+  // atual já for a deles; depois disso o usuário controla manualmente.
+  const [expandedNav, setExpandedNav] = useState(() => {
+    const initial = new Set()
+    ;[...NAV_SOUL, ...NAV_TEEN].forEach(item => {
+      if (item.submenu && location.pathname === item.to) initial.add(item.to)
+    })
+    return initial
+  })
+
+  function toggleNavExpanded(to) {
+    setExpandedNav(prev => {
+      const next = new Set(prev)
+      next.has(to) ? next.delete(to) : next.add(to)
+      return next
+    })
+  }
+
+  function isSubmenuItemActive(subTo) {
+    const [subPath, subQuery] = subTo.split('?')
+    if (location.pathname !== subPath) return false
+    const currentTab = new URLSearchParams(location.search).get('tab')
+    const subTab = new URLSearchParams(subQuery || '').get('tab')
+    return currentTab === subTab
+  }
 
   useRealtimeSync()
   useAppVersion()
@@ -164,19 +269,14 @@ export default function AppLayout() {
         <nav className="nav-section" style={{ background: '#FFE082', borderBottom: '1px solid rgba(62,32,0,.15)' }}>
           <div className="nav-section-label" style={{ color: '#3E2000', fontWeight: 800 }}>Pré Adolescentes - Soul+</div>
           {NAV_SOUL.map(item => (
-            <NavLink
+            <NavItemWithSubmenu
               key={item.to}
-              to={item.to}
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-              style={({ isActive }) => ({
-                color: '#3E2000',
-                background: isActive ? 'rgba(62,32,0,.1)' : 'transparent',
-                fontWeight: isActive ? 800 : 500,
-              })}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
-            </NavLink>
+              item={item}
+              expanded={expandedNav.has(item.to)}
+              onToggleExpand={toggleNavExpanded}
+              isSubmenuItemActive={isSubmenuItemActive}
+              soulStyle
+            />
           ))}
         </nav>
 
@@ -184,14 +284,13 @@ export default function AppLayout() {
         <nav className="nav-section" style={{ borderLeft: '4px solid var(--c1)', background: 'rgba(124,58,237,.03)' }}>
           <div className="nav-section-label" style={{ color: 'var(--c1)' }}>Adolescentes - G148 teen</div>
           {NAV_TEEN.map(item => (
-            <NavLink
+            <NavItemWithSubmenu
               key={item.to}
-              to={item.to}
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
-            </NavLink>
+              item={item}
+              expanded={expandedNav.has(item.to)}
+              onToggleExpand={toggleNavExpanded}
+              isSubmenuItemActive={isSubmenuItemActive}
+            />
           ))}
         </nav>
 
