@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
-import { today, fmtDate, toInputDate, buildBaseLabel, findDuplicateBaseGroups, formatBaseId } from '../utils/helpers'
+import { today, fmtDate, toInputDate, buildBaseLabel, findDuplicateBaseGroups, formatBaseId, namesLikelySamePerson } from '../utils/helpers'
 
 const EMPTY_HEADER = {
   // UI — controle de cascata e tema
@@ -47,6 +47,20 @@ export default function Membros() {
     return new Map((bases || []).map((base) => [String(base.id_base), base]))
   }, [bases])
 
+  // Membros já cadastrados na base selecionada no formulário de cadastro em massa
+  const membrosDaBaseSelecionada = useMemo(() => {
+    if (!header.id_base) return []
+    return (data || []).filter(m => String(m.id_base) === String(header.id_base))
+  }, [data, header.id_base])
+
+  function findSimilarMembro(nome, membrosBase, excludeId) {
+    const n = String(nome || '').trim()
+    if (!n) return null
+    return membrosBase.find(m =>
+      (!excludeId || String(m.id_membros) !== String(excludeId)) && namesLikelySamePerson(n, m.Membros)
+    ) || null
+  }
+
   // Bases filtradas apenas pelo tipo da URL (sem cascata manual)
   const basesFiltradas = (bases || [])
     .filter(b => b.Tipo === currentTipo)
@@ -84,6 +98,18 @@ export default function Membros() {
   async function handleSaveAll() {
     if (!headerOk) { toast.error('Selecione a Base.'); return }
     if (!validRows.length) { toast.error('Preencha o nome de ao menos 1 membro.'); return }
+
+    const similares = validRows
+      .map(row => ({ row, match: findSimilarMembro(row.Membros, membrosDaBaseSelecionada) }))
+      .filter(x => x.match)
+    if (similares.length > 0) {
+      const lista = similares.map(x => `"${x.row.Membros}" parece com "${x.match.Membros}"`).join('\n')
+      const continuar = confirm(
+        `Já existe(m) nome(s) semelhante(s) cadastrado(s) nesta base:\n${lista}\n\nDeseja continuar mesmo assim?`
+      )
+      if (!continuar) return
+    }
+
     setSaving(true)
     let saved = 0
     for (const row of validRows) {
@@ -123,6 +149,16 @@ export default function Membros() {
   async function handleUpdate() {
     if (!editingMembro) return
     const { id_membros, id_base, Membros, Responsavel, Email, Endereco, RG, Camiseta, Status, DataCad, _originalStatus } = editingMembro
+
+    const membrosDaBase = (data || []).filter(m => String(m.id_base) === String(id_base))
+    const similar = findSimilarMembro(Membros, membrosDaBase, id_membros)
+    if (similar) {
+      const continuar = confirm(
+        `Já existe um nome semelhante nesta base: "${similar.Membros}". Deseja continuar mesmo assim?`
+      )
+      if (!continuar) return
+    }
+
     const statusMudou = (Status || 'Ativo') !== (_originalStatus || 'Ativo')
     // Sempre salva em ISO (yyyy-mm-dd) para consistência no banco
     const dataCadFinal = statusMudou ? today() : (toInputDate(DataCad) || today())
@@ -163,7 +199,7 @@ export default function Membros() {
       <div className="card section">
         <div className="card-header">
           <div className="card-title">
-            ➕ Cadastrar Membros
+            ➕ CADASTRAR Novos Membros
             <span style={{
               marginLeft: 8, fontSize: 11, fontWeight: 700, padding: '2px 10px',
               borderRadius: 20, background: type === 'soul' ? 'var(--soul-amber)' : 'rgba(124,58,237,.12)',
@@ -243,7 +279,17 @@ export default function Membros() {
               {staging.map((row, i) => (
                 <tr key={row._rid}>
                   <td><span className="row-num">{String(i + 1).padStart(2, '0')}</span></td>
-                  <td><input value={row.Membros} onChange={e => updateRow(row._rid, 'Membros', e.target.value)} placeholder="Nome completo" style={{ minWidth: 170 }} /></td>
+                  <td>
+                    <input value={row.Membros} onChange={e => updateRow(row._rid, 'Membros', e.target.value)} placeholder="Nome completo" style={{ minWidth: 170 }} />
+                    {(() => {
+                      const match = findSimilarMembro(row.Membros, membrosDaBaseSelecionada)
+                      return match ? (
+                        <small style={{ color: 'var(--warn)', fontWeight: 600, display: 'block', marginTop: 2 }}>
+                          ⚠️ Semelhante a: {match.Membros}
+                        </small>
+                      ) : null
+                    })()}
+                  </td>
                   <td><input value={row.Responsavel} onChange={e => updateRow(row._rid, 'Responsavel', e.target.value)} placeholder="Nome completo do responsável" style={{ minWidth: 190 }} /></td>
                   <td>
                     <select value={row.Camiseta} onChange={e => updateRow(row._rid, 'Camiseta', e.target.value)}>
@@ -272,7 +318,7 @@ export default function Membros() {
       <div className="card">
         <div className="card-header">
           <div className="card-title">
-            👥 Membros Cadastrados
+            🔍 PESQUISAR Membros Cadastrados
             <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--muted)', marginLeft: 8 }}>
               {filtered.length} de {data.length}
             </span>
@@ -350,6 +396,15 @@ export default function Membros() {
                   <div key={k} className="form-group">
                     <label>{lbl}</label>
                     <input type={type} value={editingMembro[k] || ''} onChange={e => setEditingMembro(m => ({ ...m, [k]: e.target.value }))} />
+                    {k === 'Membros' && (() => {
+                      const membrosDaBase = (data || []).filter(m => String(m.id_base) === String(editingMembro.id_base))
+                      const match = findSimilarMembro(editingMembro.Membros, membrosDaBase, editingMembro.id_membros)
+                      return match ? (
+                        <small style={{ color: 'var(--warn)', fontWeight: 600 }}>
+                          ⚠️ Nome semelhante já cadastrado nesta base: {match.Membros}
+                        </small>
+                      ) : null
+                    })()}
                   </div>
                 ))}
                 <div className="form-group">

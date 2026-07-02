@@ -4,7 +4,7 @@ import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { useIgrejas } from '../hooks/useIgrejas'
 import { useAuthStore } from '../store/authStore'
-import { today, buildBaseLabel, findDuplicateBaseGroups, formatBaseId, normalizeBaseName } from '../utils/helpers'
+import { today, buildBaseLabel, findDuplicateBaseGroups, normalizeBaseName } from '../utils/helpers'
 
 const EMPTY = {
   Tipo: '', Base: '',
@@ -88,9 +88,8 @@ export default function Bases() {
       return
     }
     if (isCurrentNameDuplicated) {
-      toast('Atenção: já existe outra base com esse mesmo nome. Confira igreja e ID antes de salvar.', {
-        icon: '⚠️',
-      })
+      toast.error(`Já existe uma base chamada "${form.Base}" em ${currentTipo}. Escolha outro nome.`)
+      return
     }
 
     const statusFinal = editingId ? (form.Status || 'Ativo') : 'Ativo'
@@ -170,7 +169,7 @@ export default function Bases() {
       >
         <div className="card-header">
           <div className="card-title">
-            {editingId ? '✏️ Editando Base' : '➕ Nova Base'}
+            {editingId ? '✏️ Editando Base' : '➕ CADASTRAR Nova Base'}
             <span style={{
               marginLeft: 8, fontSize: 11, fontWeight: 700, padding: '2px 10px',
               borderRadius: 20, background: type === 'soul' ? 'var(--soul-amber)' : 'rgba(124,58,237,.12)',
@@ -220,8 +219,8 @@ export default function Bases() {
                 required
               />
               {isCurrentNameDuplicated && (
-                <small style={{ color: 'var(--warn)', fontWeight: 600 }}>
-                  Nome repetido detectado no mesmo tipo. Diferencie sempre por igreja e {formatBaseId(editingId || 'novo-id')}.
+                <small style={{ color: 'var(--bad)', fontWeight: 600 }}>
+                  Já existe uma base com esse nome em {currentTipo}. Nomes de base são únicos por tipo — escolha outro nome.
                 </small>
               )}
             </div>
@@ -352,7 +351,7 @@ export default function Bases() {
       <div className="card">
         <div className="card-header">
           <div className="card-title">
-            ⛪ Bases Cadastradas
+            🔍 PESQUISAR Bases Cadastradas
             <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--muted)', marginLeft: 8 }}>
               {filtered.length} de {data.length}
             </span>

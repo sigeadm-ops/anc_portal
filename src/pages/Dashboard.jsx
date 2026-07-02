@@ -3,8 +3,7 @@ import { useTable } from '../hooks/useTable'
 export default function Dashboard() {
   const { data: bases } = useTable('Bases')
   const { data: membros } = useTable('Membros')
-  const { data: pont } = useTable('Pontuacoes')
-  
+
   // Buscar totais das tabelas mestras
   const { data: allReg } = useTable('Regiao')
   const { data: allDist } = useTable('Distritos')
@@ -21,7 +20,6 @@ export default function Dashboard() {
   const stats = [
     { num: bases.length,    label: 'Bases',      icon: '⛪', color: 'c1' },
     { num: membros.length,  label: 'Membros',    icon: '👥', color: 'c2' },
-    { num: pont.length,     label: 'Pontuações', icon: '🏆', color: 'c3' },
     { num: `${usedReg}/${allReg.length}`,   label: 'Regiões (Cobertura)',   icon: '🗺️', color: 'c4' },
     { num: `${usedDist}/${allDist.length}`, label: 'Distritos (Cobertura)', icon: '📍', color: 'c5' },
     { num: `${usedIg}/${allIg.length}`,     label: 'Igrejas (Cobertura)',   icon: '🏛️', color: 'c1' },

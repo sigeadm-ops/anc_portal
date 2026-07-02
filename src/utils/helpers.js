@@ -85,6 +85,46 @@ export function buildBaseLabel(base, options = {}) {
   return parts.join(' · ')
 }
 
+export function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+function tokenMatches(a, b) {
+  if (a === b) return true
+  const short = a.length <= b.length ? a : b
+  const long = a.length <= b.length ? b : a
+  // Abreviação de sobrenome/nome do meio: "r" combina com "rodrigues"
+  return short.length === 1 && long.startsWith(short)
+}
+
+// Compara dois nomes tolerando abreviações/nomes do meio omitidos, mantendo a ordem
+// dos tokens (ex: "Roseane Rodrigues Crispim" ~ "Roseane R Crispim" ~ "Roseane Crispim").
+// Exige que o primeiro nome bata exatamente e que ambos tenham ao menos 2 palavras,
+// para não gerar falso positivo em primeiros nomes comuns.
+export function namesLikelySamePerson(nameA, nameB) {
+  const a = normalizeText(nameA).split(' ').filter(Boolean)
+  const b = normalizeText(nameB).split(' ').filter(Boolean)
+  if (a.length < 2 || b.length < 2) return false
+  if (a[0] !== b[0]) return false
+
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a]
+  let li = 1
+  for (let si = 1; si < shorter.length; si++) {
+    let found = false
+    while (li < longer.length) {
+      if (tokenMatches(shorter[si], longer[li])) { found = true; li++; break }
+      li++
+    }
+    if (!found) return false
+  }
+  return true
+}
+
 export function findDuplicateBaseGroups(bases, options = {}) {
   const { byTipo = false } = options
   const groups = new Map()
