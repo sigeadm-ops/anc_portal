@@ -137,6 +137,14 @@ export function NotasForm({ tipo, sheetName }) {
     enabled: Boolean(meta.id_base),
   })
 
+  // Notas já lançadas para essa mesma base+prova+data — evita lançar a
+  // mesma turma duas vezes sem perceber (cada envio cria linhas novas).
+  const { data: notasExistentes = [] } = useQuery({
+    queryKey: ['notas_existentes', tableName, meta.id_base, meta.id_provas, meta.data],
+    queryFn: () => db.getNotasExistentes(tableName, { id_base: meta.id_base, id_provas: meta.id_provas, data: meta.data }),
+    enabled: Boolean(meta.id_base && meta.id_provas && meta.data),
+  })
+
   function hasRequiredCardMeta(card) {
     return Boolean(card?.departamento?.trim() && card?.data_inicio)
   }
@@ -406,6 +414,21 @@ export function NotasForm({ tipo, sheetName }) {
     onError: (err) => toast.error(`Erro ao salvar: ${err.message}`),
   })
 
+  function handleSalvar() {
+    if (notasExistentes.length > 0) {
+      const nomes = [...new Set(notasExistentes.map(n => n.Membros).filter(Boolean))]
+      const responsaveis = [...new Set(notasExistentes.map(n => n.responsavel).filter(Boolean))]
+      const continuar = confirm(
+        `Essa prova já tem ${notasExistentes.length} nota${notasExistentes.length !== 1 ? 's' : ''} lançada${notasExistentes.length !== 1 ? 's' : ''} para essa base e data` +
+        (responsaveis.length ? ` (por ${responsaveis.join(', ')})` : '') +
+        (nomes.length ? `:\n${nomes.slice(0, 10).join(', ')}${nomes.length > 10 ? '…' : ''}` : '') +
+        `\n\nSalvar de novo vai CRIAR notas adicionais, não substituir as existentes — pode gerar duplicidade. Deseja continuar mesmo assim?`
+      )
+      if (!continuar) return
+    }
+    save.mutate()
+  }
+
   // ── Status bar ────────────────────────────────────────────────
   let statusMsg = ''
   let statusClass = ''
@@ -490,6 +513,14 @@ export function NotasForm({ tipo, sheetName }) {
       {meta.id_base && membros.length === 0 && (
         <div className="status-bar warn" style={{ marginBottom: 12 }}>
           ⚠️ Nenhum membro cadastrado nesta base ainda. Você pode digitar o nome manualmente nas linhas abaixo.
+        </div>
+      )}
+
+      {/* ── Aviso quando essa prova+base+data já tem notas lançadas ── */}
+      {notasExistentes.length > 0 && (
+        <div className="status-bar warn" style={{ marginBottom: 12 }}>
+          ⚠️ Essa prova já tem {notasExistentes.length} nota{notasExistentes.length !== 1 ? 's' : ''} lançada{notasExistentes.length !== 1 ? 's' : ''} para essa base e data.
+          Salvar de novo vai <strong>criar notas adicionais</strong>, não substituir as existentes. Para corrigir uma nota já lançada, use a tela de Relatórios em vez de lançar tudo de novo aqui.
         </div>
       )}
 
@@ -662,7 +693,7 @@ export function NotasForm({ tipo, sheetName }) {
         </button>
         <button
           className="btn btn-primary"
-          onClick={() => save.mutate()}
+          onClick={handleSalvar}
           disabled={save.isPending || !metaOk || validRows.length === 0}
         >
           {save.isPending

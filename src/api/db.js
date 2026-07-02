@@ -64,6 +64,22 @@ function isMissingColumnError(error, column) {
   return msg.includes(String(column || '').toLowerCase()) && (msg.includes('does not exist') || msg.includes('could not find') || msg.includes('column'))
 }
 
+// Confere quantas linhas casam com esse id ANTES de fazer update/delete.
+// Retorna 'ok' (0 ou 1 linha, seguro seguir), 'blocked' (>1 linha — id não é
+// único, não deve prosseguir) ou 'missing_pk_column' (essa coluna não existe
+// nessa tabela, deixa o chamador tentar o próximo candidato de PK).
+async function assertSingleRowForPk(target, pk, id) {
+  const { count, error } = await supabase
+    .from(target)
+    .select(pk, { count: 'exact', head: true })
+    .eq(pk, id)
+
+  if (error) {
+    return isMissingColumnError(error, pk) ? 'missing_pk_column' : 'ok'
+  }
+  return (count || 0) > 1 ? 'blocked' : 'ok'
+}
+
 async function fetchAllRows(queryFactory) {
   const rows = []
   let from = 0
@@ -524,17 +540,38 @@ export const db = {
 
     // Usa colunas prováveis por entidade para evitar erros 400 em schemas legados.
     const { columns, ascending } = getOrderConfig(table)
+    const pk = getPkCandidates(table)[0]
     let data = null
     let error = null
 
     for (const col of columns) {
-      const resp = await fetchAllRows((from, to) =>
+      // IMPORTANTE: sempre desempata pelo PK. Ordenar só por "data"/"created_at"
+      // (colunas com muitos valores repetidos, ex.: vários alunos na mesma
+      // prova) deixa a paginação por range() instável — o Postgres pode
+      // devolver a MESMA linha em duas páginas seguidas (ou pular alguma)
+      // quando o critério de ordenação empata na fronteira da página. Isso
+      // é o que causava notas "fantasma" duplicadas na tela sem existir
+      // duplicidade real no banco.
+      let resp = await fetchAllRows((from, to) =>
         supabase
           .from(source)
           .select('*')
           .order(col, { ascending })
+          .order(pk, { ascending: true })
           .range(from, to)
       )
+
+      if (resp.error && isMissingColumnError(resp.error, pk)) {
+        // Essa view não expõe o PK com esse nome — cai pro comportamento antigo
+        // (sem desempate) só pra essa coluna de ordenação, em vez de quebrar.
+        resp = await fetchAllRows((from, to) =>
+          supabase
+            .from(source)
+            .select('*')
+            .order(col, { ascending })
+            .range(from, to)
+        )
+      }
 
       if (!resp.error) {
         data = resp.data
@@ -548,12 +585,22 @@ export const db = {
     }
 
     if (!data) {
-      const resp = await fetchAllRows((from, to) =>
+      let resp = await fetchAllRows((from, to) =>
         supabase
           .from(source)
           .select('*')
+          .order(pk, { ascending: true })
           .range(from, to)
       )
+
+      if (resp.error && isMissingColumnError(resp.error, pk)) {
+        resp = await fetchAllRows((from, to) =>
+          supabase
+            .from(source)
+            .select('*')
+            .range(from, to)
+        )
+      }
 
       if (resp.error) throw resp.error
       const normalized = filterNotasByTable(table, resp.data ?? []).map((row) => normalizeReadRow(table, row))
@@ -644,6 +691,15 @@ export const db = {
     let error = null
 
     for (const pk of candidates) {
+      // Checagem de segurança: se o id não for único na tabela (dado legado
+      // corrompido), um .update().eq(pk, id) alteraria TODAS as linhas com
+      // esse id de uma vez, mesmo que .single() depois reclame do formato.
+      const guard = await assertSingleRowForPk(target, pk, id)
+      if (guard === 'missing_pk_column') continue
+      if (guard === 'blocked') {
+        throw new Error(`Atualização bloqueada: mais de um registro em "${target}" compartilha o mesmo identificador (${pk}=${id}). Corrija a duplicidade antes de editar, para não alterar os dois de uma vez.`)
+      }
+
       const resp = await supabase
         .from(target)
         .update(payload)
@@ -673,6 +729,16 @@ export const db = {
 
     let lastError = null
     for (const pk of candidates) {
+      // Checagem de segurança: tabelas legadas (ex.: Notas_Teen/Notas_Soul)
+      // podem ter ids duplicados por falha de importação. Sem essa checagem,
+      // .delete().eq(pk, id) apagaria TODAS as linhas com esse id de uma vez,
+      // mesmo quando o usuário só queria excluir uma nota específica.
+      const guard = await assertSingleRowForPk(target, pk, id)
+      if (guard === 'missing_pk_column') continue
+      if (guard === 'blocked') {
+        throw new Error(`Exclusão bloqueada: mais de um registro em "${target}" compartilha o mesmo identificador (${pk}=${id}). Isso indica duplicidade nos dados — peça para um administrador corrigir antes de excluir, para não perder as duas linhas de uma vez.`)
+      }
+
       const resp = await supabase
         .from(target)
         .delete()
@@ -717,6 +783,23 @@ export const db = {
       payload = rest
     }
     throw new Error('Falha ao atualizar nota após sanitizar colunas inválidas.')
+  },
+
+  // ── NOTAS: verifica se já existe lançamento para essa base+prova+data ──
+  // Usado pra avisar o coordenador ANTES de salvar, evitando lançar a
+  // mesma turma duas vezes (cada envio de formulário insere linhas novas,
+  // não substitui as existentes).
+  async getNotasExistentes(tableName, { id_base, id_provas, data }) {
+    if (!id_base || !id_provas || !data) return []
+    const { data: rows, error } = await supabase
+      .from(tableName)
+      .select('id, Membros, responsavel')
+      .eq('id_base', id_base)
+      .eq('id_provas', id_provas)
+      .eq('data', data)
+
+    if (error) return []
+    return rows || []
   },
 
   // ── NOTAS: insere todas as linhas de um formulário ──────────
