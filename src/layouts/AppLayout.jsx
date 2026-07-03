@@ -49,42 +49,26 @@ const PAGE_TITLES = {
 }
 
 // Item de menu com submenu opcional (usado por Desafios: Comparativo,
-// Discípulos, Batismos, Fotos). O link principal navega normalmente; a
-// setinha só expande/recolhe a lista de atalhos, sem navegar.
-function NavItemWithSubmenu({ item, expanded, onToggleExpand, isSubmenuItemActive, soulStyle = false }) {
+// Discípulos, Batismos, Fotos). Os atalhos ficam sempre visíveis, fixos
+// abaixo do item principal (a cliente preferiu assim, sem recolher/expandir).
+function NavItemWithSubmenu({ item, isSubmenuItemActive, soulStyle = false }) {
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'stretch' }}>
-        <NavLink
-          to={item.to}
-          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-          style={({ isActive }) => ({
-            flex: 1,
-            ...(soulStyle ? {
-              color: '#3E2000',
-              background: isActive ? 'rgba(62,32,0,.1)' : 'transparent',
-              fontWeight: isActive ? 800 : 500,
-            } : {}),
-          })}
-        >
-          <span className="nav-icon">{item.icon}</span>
-          <span className="nav-label">{item.label}</span>
-        </NavLink>
-        {item.submenu && (
-          <button
-            type="button"
-            onClick={() => onToggleExpand(item.to)}
-            aria-label={expanded ? 'Recolher atalhos' : 'Expandir atalhos'}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              padding: '0 14px', color: soulStyle ? '#3E2000' : 'inherit', opacity: 0.7,
-            }}
-          >
-            {expanded ? '▾' : '▸'}
-          </button>
-        )}
-      </div>
-      {item.submenu && expanded && (
+      <NavLink
+        to={item.to}
+        className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+        style={({ isActive }) => ({
+          ...(soulStyle ? {
+            color: '#3E2000',
+            background: isActive ? 'rgba(62,32,0,.1)' : 'transparent',
+            fontWeight: isActive ? 800 : 500,
+          } : {}),
+        })}
+      >
+        <span className="nav-icon">{item.icon}</span>
+        <span className="nav-label">{item.label}</span>
+      </NavLink>
+      {item.submenu && (
         <div>
           {item.submenu.map(sub => {
             const active = isSubmenuItemActive(sub.to)
@@ -134,24 +118,6 @@ export default function AppLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-
-  // Itens de menu com submenu (ex.: Desafios) começam expandidos se a rota
-  // atual já for a deles; depois disso o usuário controla manualmente.
-  const [expandedNav, setExpandedNav] = useState(() => {
-    const initial = new Set()
-    ;[...NAV_SOUL, ...NAV_TEEN].forEach(item => {
-      if (item.submenu && location.pathname === item.to) initial.add(item.to)
-    })
-    return initial
-  })
-
-  function toggleNavExpanded(to) {
-    setExpandedNav(prev => {
-      const next = new Set(prev)
-      next.has(to) ? next.delete(to) : next.add(to)
-      return next
-    })
-  }
 
   function isSubmenuItemActive(subTo) {
     const [subPath, subQuery] = subTo.split('?')
@@ -272,8 +238,6 @@ export default function AppLayout() {
             <NavItemWithSubmenu
               key={item.to}
               item={item}
-              expanded={expandedNav.has(item.to)}
-              onToggleExpand={toggleNavExpanded}
               isSubmenuItemActive={isSubmenuItemActive}
               soulStyle
             />
@@ -287,8 +251,6 @@ export default function AppLayout() {
             <NavItemWithSubmenu
               key={item.to}
               item={item}
-              expanded={expandedNav.has(item.to)}
-              onToggleExpand={toggleNavExpanded}
               isSubmenuItemActive={isSubmenuItemActive}
             />
           ))}
