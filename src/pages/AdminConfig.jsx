@@ -443,6 +443,7 @@ function emptyDesafio(tipo = 'G148 Teen') {
     categoria: 'admin',
     rastreamento: 'pontual',
     periodicidade: 'trimestral',
+    cadencia: 'semanal',
     pontos_total: '',
     ativo: true,
     mes_ref: '',
@@ -563,7 +564,8 @@ function DesafiosCatalogoConfig({ filterMin }) {
     setForm({
       codigo: d.codigo, nome: d.nome, descricao: d.descricao ?? '',
       categoria: d.categoria ?? 'admin', rastreamento: d.rastreamento,
-      periodicidade: d.periodicidade, pontos_total: String(d.pontos_total),
+      periodicidade: d.periodicidade, cadencia: d.cadencia || 'semanal',
+      pontos_total: String(d.pontos_total),
       ativo: d.ativo, mes_ref: d.mes_ref ? String(d.mes_ref) : '',
       data_ocorrencia: d.data_ocorrencia ?? '',
       tipo: d.tipo || 'G148 Teen'
@@ -670,6 +672,20 @@ function DesafiosCatalogoConfig({ filterMin }) {
                 {RASTREAMENTOS.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
+            {form.rastreamento === 'semanal' && (
+              <div className="form-group">
+                <label>Cadência esperada</label>
+                <select value={form.cadencia} onChange={e => setF('cadencia', e.target.value)}>
+                  <option value="semanal">Semanal (1x/semana — ex.: G148 Teen)</option>
+                  <option value="mensal">Mensal (1x/mês — ex.: Soul+)</option>
+                </select>
+                <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+                  Define o divisor usado pra calcular os pontos: semanal divide pelo nº de sábados
+                  do trimestre, mensal divide pelo nº de meses. Use mensal para desafios cuja
+                  frequência real de lançamento é ~1x por mês.
+                </div>
+              </div>
+            )}
             <div className="form-group">
               <label>Periodicidade</label>
               <select value={form.periodicidade} onChange={e => { setF('periodicidade', e.target.value); if (e.target.value !== 'mensal') setF('mes_ref', '') }}>
@@ -758,7 +774,12 @@ function DesafiosCatalogoConfig({ filterMin }) {
                     </td>
                     <td>{fmtDataBR(d.data_ocorrencia)}</td>
                     <td><span className="chip chip-muted">{CAT_LABEL[d.categoria] ?? d.categoria}</span></td>
-                    <td><span className={`chip ${d.rastreamento === 'semanal' ? 'chip-good' : 'chip-warn'}`}>{d.rastreamento}</span></td>
+                    <td>
+                      <span className={`chip ${d.rastreamento === 'semanal' ? 'chip-good' : 'chip-warn'}`}>{d.rastreamento}</span>
+                      {d.rastreamento === 'semanal' && (
+                        <span className="chip chip-muted" style={{ marginLeft: 4, fontSize: 10 }}>{d.cadencia || 'semanal'}</span>
+                      )}
+                    </td>
                     <td>
                       <span className="chip chip-muted">{d.periodicidade}</span>
                       {d.mes_ref && (

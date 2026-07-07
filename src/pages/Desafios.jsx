@@ -5,20 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTable } from '../hooks/useTable'
 import { useAuthStore } from '../store/authStore'
 import { db } from '../api/db'
-
-// ── Utilitários ──────────────────────────────────────────────────
-function gerarSabados(primeiro, ultimo) {
-  const sabados = []
-  let d = new Date(primeiro + 'T12:00:00')
-  while (d.getDay() !== 6) d.setDate(d.getDate() + 1)
-  const fim = new Date(ultimo + 'T12:00:00')
-  while (d <= fim) {
-    sabados.push(d.toISOString().slice(0, 10))
-    d = new Date(d)
-    d.setDate(d.getDate() + 7)
-  }
-  return sabados
-}
+import { gerarSabados, divisorCadencia } from '../lib/desafiosPontuacao'
 
 function fmtDataCurta(iso) {
   if (!iso) return ''
@@ -353,7 +340,8 @@ export default function Desafios() {
   }
 
   function ptsSemanal(desafio) {
-    return (realizadosNoTrim(desafio.id) * ptsPorSabado(desafio.pontos_total)).toFixed(1)
+    const divisor = divisorCadencia(desafio, sabados)
+    return (realizadosNoTrim(desafio.id) * (Number(desafio.pontos_total) / divisor)).toFixed(1)
   }
 
   function ptsPontualTrim(desafio) {
@@ -431,12 +419,12 @@ export default function Desafios() {
   const maxAnuais         = desafiosAnuais.reduce((s, d) => s + Number(d.pontos_total), 0)
 
   // ── Totalizadores acumulados do ano inteiro ───────────────────
-  // Pontuais: soma meses completados (mes != null) × pts/3
+  // Pontuais: soma meses completados (mes != null) × pts / nº de trimestres configurados no ano
   const totalPontuaisAno = desafiosPontuaisTrim.reduce((s, d) => {
     const completed = marcos.filter(m => m.desafio_id === d.id && m.mes != null && m.realizado).length
-    return s + completed * (Number(d.pontos_total) / 3)
+    return s + completed * (Number(d.pontos_total) / (trimestresConfig.length || 4))
   }, 0)
-  const maxPontuaisAno = desafiosPontuaisTrim.reduce((s, d) => s + Number(d.pontos_total) * 4, 0)
+  const maxPontuaisAno = desafiosPontuaisTrim.reduce((s, d) => s + Number(d.pontos_total) * (trimestresConfig.length || 4), 0)
 
   // Mensais: soma todos os meses do ano (marcos já contém o ano todo)
   const totalMensaisAno = desafiosMensaisAno.reduce((s, d) => s + ptsMensal(d), 0)
@@ -445,13 +433,13 @@ export default function Desafios() {
   // Semanais: soma todos os trimestres configurados usando registrosAno
   const totalSemanaisAno = trimestresConfig.reduce((total, tc) => {
     const sabadosTc = gerarSabados(tc.primeiro_sabado, tc.ultimo_sabado)
-    const numSabs = sabadosTc.length
-    if (numSabs === 0) return total
+    if (sabadosTc.length === 0) return total
     return total + desafiosSemanais.reduce((s, d) => {
+      const divisor = divisorCadencia(d, sabadosTc)
       const realizados = registrosAno.filter(r =>
         r.desafio_id === d.id && r.realizado && sabadosTc.includes(r.data_sabado)
       ).length
-      return s + realizados * (Number(d.pontos_total) / numSabs)
+      return s + realizados * (Number(d.pontos_total) / divisor)
     }, 0)
   }, 0)
   const maxSemanaisAno = desafiosSemanais.reduce((s, d) => s + Number(d.pontos_total) * trimestresConfig.length, 0)

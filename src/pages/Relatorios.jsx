@@ -5,6 +5,7 @@ import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { db } from '../api/db'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
+import { isProvaTitulo } from '../lib/desafiosPontuacao'
 
 function gerarSabados(primeiro, ultimo) {
   const sabados = []
@@ -765,7 +766,10 @@ function DesempenhoTab() {
             if (trimestre && mesesTrimestreAtivo && !mesesTrimestreAtivo.has(Number(m.mes))) return false
             return true
           }).length
-          return s + n * (Number(d.pontos_total) / 3)
+          // Com trimestre selecionado, o período tem sempre 3 meses. Sem
+          // filtro (ano inteiro), divide pelo nº real de trimestres configurados.
+          const divisor = trimestre ? 3 : (trimestresConfig.length || 4)
+          return s + n * (Number(d.pontos_total) / divisor)
         }, 0)
 
         const aPts = anuais.reduce((s, d) => {
@@ -1191,6 +1195,14 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
     return historico[historico.length - 1].dataIso.slice(0, 4)
   }, [historico])
 
+  // No Soul+, "Registro Semanal" não tem nota de verdade (só Comunhão/Verso/
+  // Discipulado/300) — só "NN Prova Soul+" deve entrar nas médias de nota.
+  // A lista bruta (`historico`) continua mostrando tudo, pra manter o extrato
+  // de auditoria completo.
+  const historicoNotas = useMemo(() => (
+    historico.filter(r => r.tipo !== 'Soul+' || isProvaTitulo(r.prova))
+  ), [historico])
+
   const { data: configTrimestresAno = [] } = useQuery({
     queryKey: ['configuracao_trimestres_individual', anoRef],
     queryFn: () => db.getConfiguracaoTrimestres(Number(anoRef)),
@@ -1199,7 +1211,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
 
   const porMes = useMemo(() => {
     const map = {}
-    historico.forEach(r => {
+    historicoNotas.forEach(r => {
       const k = monthKey(r.dataIso)
       if (!k) return
       if (!map[k]) map[k] = { soma: 0, qtd: 0 }
@@ -1218,11 +1230,11 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
         qtd: found.qtd,
       }
     })
-  }, [historico, anoRef])
+  }, [historicoNotas, anoRef])
 
   const porTrimestre = useMemo(() => {
     const map = {}
-    historico.forEach(r => {
+    historicoNotas.forEach(r => {
       const k = quarterFromIso(r.dataIso)
       if (!k) return
       if (!map[k]) map[k] = { soma: 0, qtd: 0 }
@@ -1241,11 +1253,11 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
         qtd: found.qtd,
       }
     })
-  }, [historico, anoRef])
+  }, [historicoNotas, anoRef])
 
   const porAno = useMemo(() => {
     const map = {}
-    historico.forEach(r => {
+    historicoNotas.forEach(r => {
       const y = r.dataIso.slice(0, 4)
       if (!map[y]) map[y] = { soma: 0, qtd: 0 }
       map[y].soma += r.nota
@@ -1254,12 +1266,12 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
     return Object.entries(map)
       .map(([k, v]) => ({ key: k, label: k, media: v.qtd ? v.soma / v.qtd : 0, qtd: v.qtd }))
       .sort((a, b) => a.key.localeCompare(b.key))
-  }, [historico])
+  }, [historicoNotas])
 
   const mediaGeral = useMemo(() => {
-    if (!historico.length) return 0
-    return historico.reduce((s, r) => s + r.nota, 0) / historico.length
-  }, [historico])
+    if (!historicoNotas.length) return 0
+    return historicoNotas.reduce((s, r) => s + r.nota, 0) / historicoNotas.length
+  }, [historicoNotas])
 
   const mediaAnualRef = useMemo(() => {
     const anoSelecionado = porAno.find(a => a.key === anoRef)

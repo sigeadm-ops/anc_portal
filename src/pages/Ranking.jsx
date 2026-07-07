@@ -4,19 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useAuthStore } from '../store/authStore'
-
-function gerarSabados(primeiro, ultimo) {
-  const sabados = []
-  let d = new Date(primeiro + 'T12:00:00')
-  while (d.getDay() !== 6) d.setDate(d.getDate() + 1)
-  const fim = new Date(ultimo + 'T12:00:00')
-  while (d <= fim) {
-    sabados.push(d.toISOString().slice(0, 10))
-    d = new Date(d)
-    d.setDate(d.getDate() + 7)
-  }
-  return sabados
-}
+import { gerarSabados, divisorCadencia, contarMesesDistintos, isProvaBonus, isProvaTitulo } from '../lib/desafiosPontuacao'
 
 function anoAtual() { return new Date().getFullYear() }
 
@@ -428,6 +416,42 @@ export default function Ranking() {
     [bases, currentTipo]
   )
 
+  // Base "dominante" de cada aluno: a que mais aparece entre TODAS as notas
+  // do aluno no ano (maioria simples). Existe uma inconsistência de dados
+  // conhecida em produção — um lançamento isolado às vezes grava o id_base
+  // de outra base (nome da base correto, só o ID errado, provavelmente um
+  // bug pontual de gravação) — usar a maioria evita que 1-2 notas fora do
+  // padrão desloquem o aluno (e sua nota) pra base/região/distrito errados.
+  const basePorAluno = useMemo(() => {
+    const tally = {} // studentKey -> { baseId: count }
+    const info = {}  // studentKey -> { baseId: {base, regiao, regiao_id, distrito, distrito_id, igreja, igreja_id} }
+    todasNotas.forEach(r => {
+      const nome = r.Membros ?? r.nome_aluno ?? ''
+      const baseId = String(r.id_base ?? r.base_id ?? '').trim()
+      if (!nome.trim() || !baseId) return
+      const studentKey = r.id_membros ?? (baseId + '|' + nome)
+      if (!tally[studentKey]) { tally[studentKey] = {}; info[studentKey] = {} }
+      tally[studentKey][baseId] = (tally[studentKey][baseId] ?? 0) + 1
+      if (!info[studentKey][baseId]) {
+        info[studentKey][baseId] = {
+          base: r.Base ?? '',
+          regiao: r.Regiao ?? '',
+          regiao_id: r.id_regiao ?? '',
+          distrito: r.Distritos ?? '',
+          distrito_id: r.id_distritos ?? '',
+          igreja: r.Igrejas ?? '',
+          igreja_id: r.id_igrejas ?? '',
+        }
+      }
+    })
+    const result = {}
+    Object.keys(tally).forEach(key => {
+      const baseId = Object.entries(tally[key]).sort((a, b) => b[1] - a[1])[0][0]
+      result[key] = { baseId, ...info[key][baseId] }
+    })
+    return result
+  }, [todasNotas])
+
   // Notas por base seguindo a regra:
   // - Média do dia = soma das notas ÷ alunos que fizeram AQUELA prova (não o total da turma)
   // - Pontos da base = soma das médias diárias dos sábados lançados
@@ -438,9 +462,14 @@ export default function Ranking() {
     const mapByName = {} // base_nome_normalizado -> { 'YYYY-MM-DD' -> { sum, count } }
 
     todasNotas.forEach(r => {
-      const baseIdRaw = r.id_base ?? r.base_id
-      const baseId = String(baseIdRaw ?? '').trim()
-      const baseNameNorm = normalizeBaseName(r.Base ?? r.base ?? '')
+      const nome = r.Membros ?? r.nome_aluno ?? ''
+      const rowBaseId = String(r.id_base ?? r.base_id ?? '').trim()
+      const studentKey = r.id_membros ?? (rowBaseId + '|' + nome)
+      // Usa a base dominante do aluno em vez da base gravada nessa linha
+      // específica, pra não perder/desviar pontos por um id_base incorreto
+      // isolado (ver comentário de basePorAluno acima).
+      const baseId = basePorAluno[studentKey]?.baseId ?? rowBaseId
+      const baseNameNorm = normalizeBaseName(basePorAluno[studentKey]?.base ?? r.Base ?? r.base ?? '')
       const nota = Number(r.nota ?? r.Nota)
       const dataRaw = r.data ?? r.Data
       const data = dataRaw ? String(dataRaw).slice(0, 10) : null
@@ -477,7 +506,7 @@ export default function Ranking() {
     })
 
     return { byId, byName }
-  }, [todasNotas])
+  }, [todasNotas, basePorAluno])
 
   // Mapa de pontos de discípulos por base
   const discipulosPtsPorBase = useMemo(() => {
@@ -518,13 +547,13 @@ export default function Ranking() {
 
       const weeklyPts = trimestresConfig.reduce((total, tc) => {
         const sabadosTc = gerarSabados(tc.primeiro_sabado, tc.ultimo_sabado)
-        const numSabs = sabadosTc.length
-        if (!numSabs) return total
+        if (!sabadosTc.length) return total
         return total + desafiosSemanais.reduce((s, d) => {
+          const divisor = divisorCadencia(d, sabadosTc)
           const n = todosRegistros.filter(r =>
             r.base_id === baseId && r.desafio_id === d.id && r.realizado && sabadosTc.includes(r.data_sabado)
           ).length
-          return s + n * (Number(d.pontos_total) / numSabs)
+          return s + n * (Number(d.pontos_total) / divisor)
         }, 0)
       }, 0)
 
@@ -539,7 +568,7 @@ export default function Ranking() {
         const n = todosMarcos.filter(m =>
           m.base_id === baseId && m.desafio_id === d.id && m.mes != null && m.realizado
         ).length
-        return s + n * (Number(d.pontos_total) / 3)
+        return s + n * (Number(d.pontos_total) / (trimestresConfig.length || 4))
       }, 0)
 
       const anuaisPts = desafiosAnuais.reduce((s, d) => {
@@ -573,44 +602,93 @@ export default function Ranking() {
   }, [basesFiltradas, catalogo, trimestresConfig, todosRegistros, todosMarcos, notasMediaPorBase, discipulosPtsPorBase, batismosPtsPorBase])
 
   // Ranking individual de alunos:
-  // pontos = soma de todas as notas lançadas para o aluno
+  // pontos = soma das médias trimestrais do aluno. Cada trimestre pontua
+  // (soma das notas regulares do trimestre ÷ nº de provas esperadas naquele
+  // trimestre) + soma das provas bônus (somadas direto, fora da divisão).
+  // O nº de provas esperadas é fixo por trimestre — nº de sábados (G148 Teen,
+  // ~13, uma prova por semana) ou nº de meses (Soul+, ~3, uma prova por mês) —
+  // e não pelo nº de provas que o aluno realmente fez. Isso evita que o Soul+
+  // (cadência mensal) fique artificialmente em desvantagem frente ao G148
+  // (cadência semanal) só por ter menos oportunidades de prova no calendário.
   const rankingAlunos = useMemo(() => {
+    const isSoul = currentTipo === 'Soul+'
+    const divisorPorTrimestre = {}
+
+    const findTrimestre = (dataStr) =>
+      trimestresConfig.find(tc => dataStr >= tc.primeiro_sabado && dataStr <= tc.ultimo_sabado) ?? null
+
+    const getDivisor = (tc) => {
+      const key = tc ? `${tc.ano}-${tc.trimestre}` : 'sem-trimestre'
+      if (divisorPorTrimestre[key] != null) return divisorPorTrimestre[key]
+      const sabadosTc = tc ? gerarSabados(tc.primeiro_sabado, tc.ultimo_sabado) : []
+      const divisor = tc
+        ? (isSoul ? contarMesesDistintos(sabadosTc) : sabadosTc.length) || 1
+        : (isSoul ? 3 : 13) // fallback p/ notas fora de qualquer trimestre configurado
+      divisorPorTrimestre[key] = divisor
+      return divisor
+    }
+
     const map = {}
     todasNotas.forEach(r => {
       const nota = Number(r.nota ?? r.Nota)
       if (!Number.isFinite(nota)) return
+      // No Soul+, só "NN Prova Soul+" tem nota de verdade — "Registro Semanal"
+      // (Comunhão/Verso/Discipulado/300, sem nota) não conta pra média.
+      if (isSoul && !isProvaTitulo(r.titulo ?? r.Titulo)) return
       const nome = r.Membros ?? r.nome_aluno ?? ''
       if (!nome.trim()) return
-      const baseId = r.id_base
-      const studentKey = r.id_membros ?? (baseId + '|' + nome)
+      const rowBaseId = String(r.id_base ?? '').trim()
+      const studentKey = r.id_membros ?? (rowBaseId + '|' + nome)
       if (!map[studentKey]) {
-        map[studentKey] = {
-          id: studentKey,
-          nome,
-          base_id: baseId,
-          base: r.Base ?? '',
-          regiao: r.Regiao ?? '',
-          regiao_id: r.id_regiao ?? '',
-          distrito: r.Distritos ?? '',
-          distrito_id: r.id_distritos ?? '',
-          igreja: r.Igrejas ?? '',
-          igreja_id: r.id_igrejas ?? '',
-          sum: 0, count: 0,
-        }
+        map[studentKey] = { id: studentKey, nome, count: 0, porTrimestre: {} }
       }
-      map[studentKey].sum += nota
-      map[studentKey].count++
+      const student = map[studentKey]
+      student.count++
+
+      const data = String(r.data ?? r.Data ?? '').slice(0, 10)
+      const tc = findTrimestre(data)
+      const key = tc ? `${tc.ano}-${tc.trimestre}` : 'sem-trimestre'
+      if (!student.porTrimestre[key]) {
+        student.porTrimestre[key] = { tc, regularSum: 0, bonusSum: 0 }
+      }
+      const bucket = student.porTrimestre[key]
+      if (isProvaBonus(r.titulo ?? r.Titulo)) {
+        bucket.bonusSum += nota
+      } else {
+        bucket.regularSum += nota
+      }
     })
+
     return Object.values(map)
       .filter(s => s.count > 0)
-      .map(s => ({
-        ...s,
-        pontos: Math.round(s.sum * 10) / 10,
-        sub: s.base,
-        extra: `${s.count} ${s.count === 1 ? 'prova lançada' : 'provas lançadas'}`,
-      }))
+      .map(s => {
+        // base_id/geo vêm de basePorAluno (base mais frequente entre TODAS
+        // as notas do aluno) — não da nota que criou essa entrada — pra não
+        // deslocar o aluno pra base errada por causa de 1 lançamento com bug.
+        const infoBase = basePorAluno[s.id] ?? {}
+        const pontos = Object.values(s.porTrimestre).reduce((acc, bucket) => {
+          const divisor = getDivisor(bucket.tc)
+          return acc + (bucket.regularSum / divisor) + bucket.bonusSum
+        }, 0)
+        return {
+          id: s.id,
+          nome: s.nome,
+          count: s.count,
+          base_id: infoBase.baseId ?? '',
+          base: infoBase.base ?? '',
+          regiao: infoBase.regiao ?? '',
+          regiao_id: infoBase.regiao_id ?? '',
+          distrito: infoBase.distrito ?? '',
+          distrito_id: infoBase.distrito_id ?? '',
+          igreja: infoBase.igreja ?? '',
+          igreja_id: infoBase.igreja_id ?? '',
+          pontos: Math.round(pontos * 10) / 10,
+          sub: infoBase.base ?? '',
+          extra: `${s.count} ${s.count === 1 ? 'prova lançada' : 'provas lançadas'}`,
+        }
+      })
       .sort((a, b) => (b.pontos - a.pontos) || a.nome.localeCompare(b.nome))
-  }, [todasNotas])
+  }, [todasNotas, trimestresConfig, currentTipo, basePorAluno])
 
   // Número de bases G148 por igreja
   const basesPerIgreja = useMemo(() => {
@@ -883,7 +961,7 @@ export default function Ranking() {
         )}
         {view === 'alunos' && (
           <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
-            💡 Pontuação = média das notas em todas as provas do ano
+            💡 Pontuação = soma das médias trimestrais (notas ÷ provas esperadas no trimestre) + provas bônus
           </div>
         )}
       </div>

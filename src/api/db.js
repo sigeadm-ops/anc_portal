@@ -984,7 +984,7 @@ export const db = {
     return sortDesafios(data ?? [])
   },
 
-  async upsertDesafioCatalogo({ id, codigo, nome, descricao, categoria, rastreamento, periodicidade, pontos_total, ordem, ativo, mes_ref, tipo, data_ocorrencia }) {
+  async upsertDesafioCatalogo({ id, codigo, nome, descricao, categoria, rastreamento, periodicidade, pontos_total, ordem, ativo, mes_ref, tipo, data_ocorrencia, cadencia }) {
     const payload = {
       codigo,
       nome,
@@ -998,22 +998,26 @@ export const db = {
       mes_ref: mes_ref ? Number(mes_ref) : null,
       tipo: tipo || 'G148 Teen',
       data_ocorrencia: data_ocorrencia || null,
+      cadencia: cadencia === 'mensal' ? 'mensal' : 'semanal',
     }
 
-    const save = async (withDate = true) => {
-      const row = withDate ? payload : { ...payload, data_ocorrencia: undefined }
+    const save = async (withDate = true, withCadencia = true) => {
+      let row = payload
+      if (!withDate) row = { ...row, data_ocorrencia: undefined }
+      if (!withCadencia) row = { ...row, cadencia: undefined }
       if (id) {
         return supabase.from('desafios_catalogo').update(row).eq('id', id).select().single()
       }
       return supabase.from('desafios_catalogo').insert(row).select().single()
     }
 
-    let resp = await save(true)
+    let resp = await save(true, true)
     const missingDateCol = resp.error && String(resp.error.message || '').toLowerCase().includes('data_ocorrencia')
+    const missingCadenciaCol = resp.error && String(resp.error.message || '').toLowerCase().includes('cadencia')
 
-    // Compatibilidade para bancos que ainda não aplicaram a migration da coluna data_ocorrencia
-    if (missingDateCol) {
-      resp = await save(false)
+    // Compatibilidade para bancos que ainda não aplicaram as migrations mais recentes
+    if (missingDateCol || missingCadenciaCol) {
+      resp = await save(!missingDateCol, !missingCadenciaCol)
     }
 
     if (resp.error) throw resp.error
@@ -1151,30 +1155,42 @@ export const db = {
   },
 
   async getAllRegistrosPorAno(ano) {
-    const { data, error } = await supabase
-      .from('desafios_registros')
-      .select('*')
-      .gte('data_sabado', `${ano}-01-01`)
-      .lte('data_sabado', `${ano}-12-31`)
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('desafios_registros')
+        .select('*')
+        .gte('data_sabado', `${ano}-01-01`)
+        .lte('data_sabado', `${ano}-12-31`)
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
     if (error) throw error
     return data ?? []
   },
 
   async getAllMarcosPorAno(ano) {
-    const { data, error } = await supabase
-      .from('desafios_marcos')
-      .select('*')
-      .eq('ano', ano)
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('desafios_marcos')
+        .select('*')
+        .eq('ano', ano)
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
     if (error) throw error
     return data ?? []
   },
 
   async getAllNotasTeenPorAno(ano) {
-    const { data, error } = await supabase
-      .from('vw_notas_teen')
-      .select('id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota')
-      .gte('data', `${ano}-01-01`)
-      .lte('data', `${ano}-12-31`)
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('vw_notas_teen')
+        .select('id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo')
+        .gte('data', `${ano}-01-01`)
+        .lte('data', `${ano}-12-31`)
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
     if (error) throw error
     return (data ?? []).filter(r => {
       const n = Number(r.nota ?? r.Nota)
@@ -1183,11 +1199,15 @@ export const db = {
   },
 
   async getAllNotasSoulPorAno(ano) {
-    const { data, error } = await supabase
-      .from('vw_notas_soul')
-      .select('id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota')
-      .gte('data', `${ano}-01-01`)
-      .lte('data', `${ano}-12-31`)
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('vw_notas_soul')
+        .select('id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo')
+        .gte('data', `${ano}-01-01`)
+        .lte('data', `${ano}-12-31`)
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
     if (error) throw error
     return (data ?? []).filter(r => {
       const n = Number(r.nota ?? r.Nota)
@@ -1486,10 +1506,14 @@ export const db = {
   },
 
   async getAllDiscipulosRegistrosPorAno(ano) {
-    const { data, error } = await supabase
-      .from('discipulos_registros')
-      .select('*')
-      .eq('ano', ano)
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('discipulos_registros')
+        .select('*')
+        .eq('ano', ano)
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
     if (error) throw error
     return data ?? []
   },
@@ -1569,10 +1593,14 @@ export const db = {
   },
 
   async getAllBatismosPorAno(ano) {
-    const { data, error } = await supabase
-      .from('batismos_registros')
-      .select('*')
-      .eq('ano', ano)
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('batismos_registros')
+        .select('*')
+        .eq('ano', ano)
+        .order('id', { ascending: true })
+        .range(from, to)
+    )
     if (error) throw error
     return data ?? []
   },
