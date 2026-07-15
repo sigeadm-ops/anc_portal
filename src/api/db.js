@@ -791,12 +791,31 @@ export const db = {
   // não substitui as existentes).
   async getNotasExistentes(tableName, { id_base, id_provas, data }) {
     if (!id_base || !id_provas || !data) return []
+    // Usa select('*') para evitar erro 400 em tabelas legadas que não têm
+    // todas as colunas (ex.: lancado_em, created_at ausentes em Notas_Soul).
     const { data: rows, error } = await supabase
       .from(tableName)
-      .select('id, Membros, responsavel')
+      .select('*')
       .eq('id_base', id_base)
       .eq('id_provas', id_provas)
       .eq('data', data)
+
+    if (error) return []
+    return rows || []
+  },
+
+  // ── NOTAS: todos os lançamentos de uma base (todas as provas) ──
+  // Usado pra detectar duplicidade (mesma criança + mesma prova lançada
+  // mais de uma vez) assim que a base é escolhida, sem depender da prova
+  // ou data selecionadas no momento.
+  async getNotasPorBase(tableName, id_base) {
+    if (!id_base) return []
+    // Usa select('*') para evitar erro 400 em tabelas legadas que não
+    // possuem todas as colunas listadas (prova_id, lancado_em, created_at).
+    const { data: rows, error } = await supabase
+      .from(tableName)
+      .select('*')
+      .eq('id_base', id_base)
 
     if (error) return []
     return rows || []
@@ -1417,7 +1436,7 @@ export const db = {
       })
   },
 
-  async createDiscipulosCartao({ membro_id, base_id, ano, tipo = 'G148 Teen', nome, departamento, descricao, data_inicio, data_fim, observacoes_professor }) {
+  async createDiscipulosCartao({ membro_id, base_id, ano, tipo = 'G148 Teen', nome, departamento, descricao, data_inicio, data_fim, observacoes_professor, foto_url }) {
     const { count, error: countError } = await supabase
       .from('discipulos_cartoes')
       .select('*', { count: 'exact', head: true })
@@ -1441,6 +1460,7 @@ export const db = {
       data_inicio: data_inicio || null,
       data_fim: data_fim || null,
       observacoes_professor: observacoes_professor?.trim() || null,
+      foto_url: foto_url ?? null,
     }
 
     const { data, error } = await supabase
@@ -1452,7 +1472,7 @@ export const db = {
     return data
   },
 
-  async updateDiscipulosCartao({ id, nome, departamento, descricao, data_inicio, data_fim, observacoes_professor }) {
+  async updateDiscipulosCartao({ id, nome, departamento, descricao, data_inicio, data_fim, observacoes_professor, foto_url }) {
     const payload = {
       nome: nome?.trim() || 'Cartão',
       departamento: departamento?.trim() || null,
@@ -1462,6 +1482,7 @@ export const db = {
       observacoes_professor: observacoes_professor?.trim() || null,
       atualizado_em: new Date().toISOString(),
     }
+    if (foto_url !== undefined) payload.foto_url = foto_url ?? null
     const { data, error } = await supabase
       .from('discipulos_cartoes')
       .update(payload)
@@ -1503,6 +1524,39 @@ export const db = {
       .in('card_id', ids)
     if (error) throw error
     return data ?? []
+  },
+
+  async getAllDiscipulosCartoesPorAno(ano) {
+    const { data, error } = await fetchAllRows((from, to) =>
+      supabase
+        .from('discipulos_cartoes')
+        .select('*')
+        .eq('ano', ano)
+        .order('ordem', { ascending: true })
+        .range(from, to)
+    )
+    if (error) throw error
+    return data ?? []
+  },
+
+  async getDiscipulosConfig() {
+    const { data, error } = await supabase
+      .from('discipulos_config')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle()
+    if (error) throw error
+    return data
+  },
+
+  async upsertDiscipulosConfig({ pontos_por_cartao }) {
+    const { data, error } = await supabase
+      .from('discipulos_config')
+      .upsert({ id: 1, pontos_por_cartao: Number(pontos_por_cartao ?? 0), atualizado_em: new Date().toISOString() }, { onConflict: 'id' })
+      .select()
+      .single()
+    if (error) throw error
+    return data
   },
 
   async getAllDiscipulosRegistrosPorAno(ano) {

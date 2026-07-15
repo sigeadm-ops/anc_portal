@@ -6,6 +6,7 @@ import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useAuthStore } from '../store/authStore'
 import { toInputDate, buildBaseLabel, fmtDate } from '../utils/helpers'
+import { marcarDuplicados, corDuplicidade } from '../utils/duplicidade'
 
 function getLastSaturdayIso(ref = new Date()) {
   const d = new Date(ref)
@@ -145,8 +146,37 @@ export function NotasForm({ tipo, sheetName }) {
     enabled: Boolean(meta.id_base && meta.id_provas && meta.data),
   })
 
+  // Duplicidade = mesma base + mesma criança + mesmo registro de prova, em
+  // QUALQUER prova/data já lançada nessa base — aparece assim que a base é
+  // escolhida, sem precisar selecionar a prova específica. O lançamento
+  // mais recente (lancado_em) fica em vermelho mais intenso.
+  const { data: notasDaBase = [] } = useQuery({
+    queryKey: ['notas_por_base', tableName, meta.id_base],
+    queryFn: () => db.getNotasPorBase(tableName, meta.id_base),
+    enabled: Boolean(meta.id_base),
+  })
+
+  const duplicadosNaBase = useMemo(() => {
+    const marcados = marcarDuplicados(notasDaBase, {
+      keyOf: n => {
+        const idProva = n.id_provas ?? n.prova_id
+        return (n.id_membros && idProva) ? `${n.id_membros}|${idProva}` : null
+      },
+      timeOf: n => n.lancado_em || n.created_at,
+      dataOf: n => n.data || n.Data,
+    })
+    return marcados
+      .filter(n => n.isDuplicado)
+      .sort((a, b) => {
+        const ka = `${a.id_membros}|${a.id_provas ?? a.prova_id}`
+        const kb = `${b.id_membros}|${b.id_provas ?? b.prova_id}`
+        return ka.localeCompare(kb) || String(a.lancado_em || '').localeCompare(String(b.lancado_em || ''))
+      })
+  }, [notasDaBase])
+
   function hasRequiredCardMeta(card) {
-    return Boolean(card?.departamento?.trim() && card?.data_inicio)
+    // Basta ter data_inicio para o cartão ser considerado válido para notas
+    return Boolean(card?.data_inicio)
   }
 
   function isCardActiveForDate(card, dateIso) {
@@ -169,17 +199,6 @@ export function NotasForm({ tipo, sheetName }) {
     })
     return map
   }, [cartoesDiscipulado, meta.data])
-
-  const hasDiscipuladoCardByMembro = useMemo(() => {
-    const map = {}
-    cartoesDiscipulado.forEach((card) => {
-      const membroId = String(card?.membro_id ?? '').trim()
-      if (!membroId) return
-      if (!hasRequiredCardMeta(card)) return
-      map[membroId] = true
-    })
-    return map
-  }, [cartoesDiscipulado])
 
   const setM = (k, v) => setMeta(m => ({ ...m, [k]: v }))
 
@@ -248,13 +267,12 @@ export function NotasForm({ tipo, sheetName }) {
         const m = membros.find(mem => mem.id_membros === v)
         const membroKey = String(v ?? '').trim()
         const discipuladoValido = activeDiscipuladoByMembro[membroKey]
-        const possuiCartaoValido = Boolean(hasDiscipuladoCardByMembro[membroKey])
         const status300 = status300ByMembro[membroKey] || { treinamento: false, estudo: false }
         return {
           ...row,
           id_membros: v,
           Membros: m?.Membros || '',
-          Discipulado: discipuladoValido ? 'Sim' : (possuiCartaoValido ? row.Discipulado : 'Não'),
+          Discipulado: discipuladoValido ? 'Sim' : 'Não',
           TrezentosTrainamento: status300.treinamento ? 'Sim' : row.TrezentosTrainamento,
           TrezentosEstudo: status300.estudo ? 'Sim' : row.TrezentosEstudo,
         }
@@ -271,13 +289,10 @@ export function NotasForm({ tipo, sheetName }) {
 
       let next = row
 
-      if (discipuladoAtivo && row.Discipulado !== 'Sim') {
-        next = { ...next, Discipulado: 'Sim' }
-      }
-
-      const possuiCartao = hasDiscipuladoCardByMembro[membroId]
-      if (!possuiCartao && row.Discipulado !== 'Não' && membroId) {
-        next = { ...next, Discipulado: 'Não' }
+      // Discipulado é estritamente binário: Sim se cartão ativo nesta data, Não caso contrário
+      const novoDisc = discipuladoAtivo ? 'Sim' : (membroId ? 'Não' : row.Discipulado)
+      if (novoDisc !== row.Discipulado) {
+        next = { ...next, Discipulado: novoDisc }
       }
 
       if (status300.treinamento && next.TrezentosTrainamento !== 'Sim') {
@@ -289,7 +304,7 @@ export function NotasForm({ tipo, sheetName }) {
 
       return next
     }))
-  }, [activeDiscipuladoByMembro, hasDiscipuladoCardByMembro, status300ByMembro])
+  }, [activeDiscipuladoByMembro, status300ByMembro])
 
   function handleClear() {
     setMeta({ id_provas: '', data: '', responsavel: '', id_base: '', Base: '', Regiao: '', Distritos: '', Igrejas: '', id_regiao: '', id_distritos: '', id_igrejas: '' })
@@ -460,11 +475,20 @@ export function NotasForm({ tipo, sheetName }) {
           <label>{isSoul ? 'Semana *' : 'Prova *'}</label>
             <select value={meta.id_provas} onChange={handleProvaChange}>
               <option value="">{isSoul ? 'Selecione a semana…' : 'Selecione a prova…'}</option>
-              {provasOpts.map(p => (
-                <option key={getProvaId(p)} value={getProvaId(p)}>
-                  {p.nome} {toIsoOnlyDate(p.data || p.Data) ? `- ${fmtDate(toIsoOnlyDate(p.data || p.Data))}` : ''}
-                </option>
-              ))}
+              {(() => {
+                const provasComNota = new Set(
+                  notasDaBase.map(n => String(n.id_provas ?? n.prova_id ?? '')).filter(Boolean)
+                )
+                return provasOpts.map(p => {
+                  const id = String(getProvaId(p))
+                  const jaLancado = provasComNota.has(id)
+                  return (
+                    <option key={id} value={id}>
+                      {jaLancado ? '✓ ' : ''}{p.nome}{toIsoOnlyDate(p.data || p.Data) ? ` - ${fmtDate(toIsoOnlyDate(p.data || p.Data))}` : ''}{jaLancado ? ' (✓ já lançado)' : ''}
+                    </option>
+                  )
+                })
+              })()}
             </select>
         </div>
 
@@ -509,18 +533,78 @@ export function NotasForm({ tipo, sheetName }) {
         )}
       </div>
 
-      {/* ── Aviso quando base sem membros ── */}
-      {meta.id_base && membros.length === 0 && (
-        <div className="status-bar warn" style={{ marginBottom: 12 }}>
-          ⚠️ Nenhum membro cadastrado nesta base ainda. Você pode digitar o nome manualmente nas linhas abaixo.
+      {/* ── Duplicidade na base inteira: aparece direto ao escolher a base,
+          antes mesmo de selecionar a prova — mesma criança + mesma prova
+          lançada 2x ou mais, em qualquer data. ── */}
+      {duplicadosNaBase.length > 0 && (
+        <div className="table-wrap" style={{ marginBottom: 12, overflowX: 'auto' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--bad)', marginBottom: 6 }}>
+            ⚠ Duplicidade nesta base: {duplicadosNaBase.length} lançamento{duplicadosNaBase.length !== 1 ? 's' : ''} repetido{duplicadosNaBase.length !== 1 ? 's' : ''} (mesma criança + mesma prova). Vermelho mais intenso = lançamento mais recente:
+          </div>
+          <table style={{ minWidth: 640 }}>
+            <thead>
+              <tr>
+                <th>Criança</th>
+                <th>Prova</th>
+                <th style={{ textAlign: 'center' }}>Nota</th>
+                <th>Data</th>
+                <th>Responsável</th>
+                <th>Lançado em</th>
+              </tr>
+            </thead>
+            <tbody>
+              {duplicadosNaBase.map(n => (
+                <tr
+                  key={n.id}
+                  style={{ background: corDuplicidade(n.duplicidadeIntensidade), boxShadow: 'inset 3px 0 0 var(--bad)' }}
+                  title={n.duplicidadeMaisRecente ? 'Lançamento mais recente' : 'Lançamento anterior (possível duplicidade)'}
+                >
+                  <td>
+                    <strong>{n.Membros || '—'}</strong>
+                    {n.duplicidadeMaisRecente && (
+                      <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: 'var(--bad)' }}>mais recente</span>
+                    )}
+                  </td>
+                  <td>{n.titulo || n.Titulo || '—'}</td>
+                  <td style={{ textAlign: 'center' }}>{n.Nota ?? n.nota ?? '—'}</td>
+                  <td>{fmtDate(toInputDate(n.data || n.Data)) || '—'}</td>
+                  <td>{n.responsavel || '—'}</td>
+                  <td>{(n.lancado_em || n.created_at) ? new Date(n.lancado_em || n.created_at).toLocaleString('pt-BR') : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
       {/* ── Aviso quando essa prova+base+data já tem notas lançadas ── */}
       {notasExistentes.length > 0 && (
+        <div style={{
+          marginBottom: 12, padding: '12px 16px', borderRadius: 8,
+          background: 'rgba(255,60,60,.12)', border: '2px solid var(--bad)',
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}>
+          <span style={{ fontSize: 20, flexShrink: 0 }}>🚫</span>
+          <div>
+            <div style={{ fontWeight: 700, color: 'var(--bad)', marginBottom: 4 }}>
+              ATENÇÃO — Essa prova já foi lançada para esta base!
+            </div>
+            <div style={{ fontSize: 13 }}>
+              {notasExistentes.length} nota{notasExistentes.length !== 1 ? 's' : ''} já registrada{notasExistentes.length !== 1 ? 's' : ''}{' '}
+              {[...new Set(notasExistentes.map(n => n.responsavel).filter(Boolean))].length > 0
+                ? `por ${[...new Set(notasExistentes.map(n => n.responsavel).filter(Boolean))].join(', ')}`
+                : ''}.{' '}
+              Salvar novamente vai <strong>criar notas duplicadas</strong>.
+              Para corrigir um lançamento, use a tela de <strong>Relatórios</strong>.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Aviso quando base sem membros ── */}
+      {meta.id_base && membros.length === 0 && (
         <div className="status-bar warn" style={{ marginBottom: 12 }}>
-          ⚠️ Essa prova já tem {notasExistentes.length} nota{notasExistentes.length !== 1 ? 's' : ''} lançada{notasExistentes.length !== 1 ? 's' : ''} para essa base e data.
-          Salvar de novo vai <strong>criar notas adicionais</strong>, não substituir as existentes. Para corrigir uma nota já lançada, use a tela de Relatórios em vez de lançar tudo de novo aqui.
+          ⚠️ Nenhum membro cadastrado nesta base ainda. Você pode digitar o nome manualmente nas linhas abaixo.
         </div>
       )}
 
@@ -624,31 +708,18 @@ export function NotasForm({ tipo, sheetName }) {
                   <SimNao value={row.Verso} onChange={e => updateRow(row._rid, 'Verso', e.target.value)} />
                 </td>
 
-                <td>
-                  {(() => {
-                    const membroKey = String(row.id_membros ?? '').trim()
-                    const podeUsarDiscipulado = Boolean(hasDiscipuladoCardByMembro[membroKey])
-                    const ativoNaData = Boolean(activeDiscipuladoByMembro[membroKey])
-                    return (
-                      <>
-                  <select
-                    value={row.Discipulado}
-                    onChange={e => updateRow(row._rid, 'Discipulado', e.target.value)}
-                    style={{ width: '100%', opacity: !podeUsarDiscipulado && row.id_membros ? 0.45 : 1 }}
-                    disabled={!podeUsarDiscipulado && Boolean(row.id_membros)}
-                  >
-                    <option value="">—</option>
-                    <option value="Não">Não</option>
-                    <option value="Sim" disabled={!podeUsarDiscipulado}>Sim</option>
-                  </select>
-                  {podeUsarDiscipulado && !ativoNaData && row.id_membros && (
-                    <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4 }}>
-                      Fora da vigência; ajuste manual permitido.
-                    </div>
-                  )}
-                      </>
-                    )
-                  })()}
+                <td style={{ textAlign: 'center' }}>
+                  {row.id_membros ? (
+                    <span style={{
+                      display: 'inline-block', padding: '2px 10px', borderRadius: 6,
+                      fontSize: 12, fontWeight: 700,
+                      background: row.Discipulado === 'Sim' ? 'rgba(56,242,163,.18)' : 'rgba(255,255,255,.07)',
+                      color: row.Discipulado === 'Sim' ? 'var(--good)' : 'var(--muted)',
+                      border: `1px solid ${row.Discipulado === 'Sim' ? 'var(--good)' : 'rgba(255,255,255,.15)'}`,
+                    }}>
+                      {row.Discipulado === 'Sim' ? '✅ Sim' : '❌ Não'}
+                    </span>
+                  ) : <span style={{ opacity: 0.3 }}>—</span>}
                 </td>
 
                 <td>

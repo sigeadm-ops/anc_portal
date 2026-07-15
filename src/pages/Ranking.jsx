@@ -376,17 +376,17 @@ export default function Ranking() {
     refetchOnWindowFocus: true,
   })
 
-  const { data: discipulosRegs = [], isLoading: loadingDisc } = useQuery({
-    queryKey: ['all_discipulos', ano],
-    queryFn: () => db.getAllDiscipulosRegistrosPorAno(ano),
+  const { data: discipulosCartoes = [], isLoading: loadingDisc } = useQuery({
+    queryKey: ['all_discipulos_cartoes', ano],
+    queryFn: () => db.getAllDiscipulosCartoesPorAno(ano),
     staleTime: 2 * 60 * 1000,
     refetchInterval: LIVE_REFRESH_MS,
     refetchOnWindowFocus: true,
   })
 
-  const { data: discipulosCatalogo = [] } = useQuery({
-    queryKey: ['discipulos_catalogo'],
-    queryFn: () => db.getDiscipulosRequisitoCatalogo(),
+  const { data: discipulosConfig = null } = useQuery({
+    queryKey: ['discipulos_config'],
+    queryFn: () => db.getDiscipulosConfig(),
     staleTime: 10 * 60 * 1000,
   })
 
@@ -508,19 +508,31 @@ export default function Ranking() {
     return { byId, byName }
   }, [todasNotas, basePorAluno])
 
-  // Mapa de pontos de discípulos por base
+  // Pontos de discípulos por base:
+  // — só o primeiro cartão (ordem = 1) de cada membro conta
+  // — metade dos pontos ao ativar (data_inicio preenchida)
+  // — pontos completos ao encerrar (data_fim preenchida)
   const discipulosPtsPorBase = useMemo(() => {
-    if (!discipulosCatalogo.length || !discipulosRegs.length) return {}
-    const pontosReq = Object.fromEntries(discipulosCatalogo.map(r => [r.id, Number(r.pontos ?? 0)]))
+    const ptsPorCartao = Number(discipulosConfig?.pontos_por_cartao ?? 0)
+    if (!ptsPorCartao || !discipulosCartoes.length) return {}
+
+    // Primeiro cartão por membro (menor ordem)
+    const primeiros = {}
+    discipulosCartoes.forEach(card => {
+      const key = `${card.base_id}|${card.membro_id}`
+      if (!primeiros[key] || (card.ordem ?? 999) < (primeiros[key].ordem ?? 999)) {
+        primeiros[key] = card
+      }
+    })
+
     const map = {}
-    discipulosRegs.forEach(r => {
-      if (!r.realizado || !r.data_realizacao || !r.responsavel) return
-      const pts = pontosReq[r.requisito_id] ?? 0
-      if (!pts) return
-      map[r.base_id] = (map[r.base_id] ?? 0) + pts
+    Object.values(primeiros).forEach(card => {
+      if (!card.data_inicio) return
+      const pts = card.data_fim ? ptsPorCartao : ptsPorCartao / 2
+      map[card.base_id] = (map[card.base_id] ?? 0) + pts
     })
     return map
-  }, [discipulosRegs, discipulosCatalogo])
+  }, [discipulosCartoes, discipulosConfig])
 
   // Mapa de pontos de batismos por base
   const batismosPtsPorBase = useMemo(() => {

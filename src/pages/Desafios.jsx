@@ -1159,17 +1159,6 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     [allMembros, baseId]
   )
 
-  const { data: catalogo = [] } = useQuery({
-    queryKey: ['discipulos_catalogo'],
-    queryFn: () => db.getDiscipulosRequisitoCatalogo(),
-  })
-
-  const { data: registros = [], isLoading: loadingRegs } = useQuery({
-    queryKey: ['discipulos_registros', baseId, ano, tipo],
-    queryFn: () => db.getDiscipulosRegistros(baseId, ano, tipo),
-    enabled: Boolean(baseId),
-  })
-
   const { data: cartoes = [], isLoading: loadingCartoes } = useQuery({
     queryKey: ['discipulos_cartoes', baseId, ano, tipo],
     queryFn: () => db.getDiscipulosCartoes(baseId, ano, tipo),
@@ -1184,6 +1173,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
 
   const [expanded, setExpanded] = useState({})
   const [metaCartao, setMetaCartao] = useState({})
+  const [fotoFiles, setFotoFiles] = useState({}) // { [cardId]: File | null }
   // Rascunhos locais (não salvos no DB): { [membroId]: [{_draftId, nome, departamento, data_inicio, data_fim, observacoes_professor}] }
   const [draftCartoes, setDraftCartoes] = useState({})
 
@@ -1219,15 +1209,6 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     Object.values(map).forEach(arr => arr.sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0)))
     return map
   }, [cartoes])
-
-  const registrosByCartao = useMemo(() => {
-    const map = {}
-    registros.forEach(r => {
-      if (!map[r.card_id]) map[r.card_id] = {}
-      map[r.card_id][r.requisito_id] = r
-    })
-    return map
-  }, [registros])
 
   const hasAnyDrafts = useMemo(
     () => Object.values(draftCartoes).some(arr => arr.length > 0),
@@ -1267,41 +1248,6 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     }))
   }
 
-  function handleToggleMembro(membroId) {
-    const isOpen = expanded[membroId]
-    const drafts = draftCartoes[membroId] || []
-    if (isOpen && drafts.length > 0) {
-      if (!window.confirm(`Este aluno tem ${drafts.length} cartão(ões) não salvo(s). Ao fechar, os rascunhos serão descartados. Deseja continuar?`)) {
-        return
-      }
-      setDraftCartoes(prev => ({ ...prev, [membroId]: [] }))
-    }
-    setExpanded(e => ({ ...e, [membroId]: !e[membroId] }))
-  }
-
-  function isRegLocked(reg) {
-    return Boolean(reg?.realizado && reg?.data_realizacao && reg?.responsavel)
-  }
-
-  function pontosDoCartao(cartaoId) {
-    const regs = registrosByCartao[cartaoId] ?? {}
-    return catalogo.reduce((sum, req) => {
-      const reg = regs[req.id]
-      return isRegLocked(reg) ? sum + Number(req.pontos ?? 0) : sum
-    }, 0)
-  }
-
-  function completosDoCartao(cartaoId) {
-    const regs = registrosByCartao[cartaoId] ?? {}
-    return catalogo.filter(req => isRegLocked(regs[req.id])).length
-  }
-
-  const upsertReg = useMutation({
-    mutationFn: (payload) => db.upsertDiscipuloRegistro(payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['discipulos_registros', baseId, ano, tipo] }),
-    onError: (e) => toast.error('Erro: ' + e.message),
-  })
-
   // Salva rascunho: cria no DB pela primeira vez
   const saveDraftCartao = useMutation({
     mutationFn: ({ membroId, draft }) => db.createDiscipulosCartao({
@@ -1318,6 +1264,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     }),
     onSuccess: (_, { membroId, draft }) => {
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes', baseId, ano, tipo] })
+      qc.invalidateQueries({ queryKey: ['discipulos_cartoes_notas'] })
       setDraftCartoes(prev => ({
         ...prev,
         [membroId]: (prev[membroId] || []).filter(d => d._draftId !== draft._draftId),
@@ -1327,11 +1274,21 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     onError: (e) => toast.error('Erro ao salvar cartão: ' + e.message),
   })
 
-  // Atualiza cartão já existente no DB
+  // Atualiza cartão já existente no DB (inclui upload de foto)
   const saveMetaCartao = useMutation({
-    mutationFn: (payload) => db.updateDiscipulosCartao(payload),
+    mutationFn: async (payload) => {
+      let foto_url = payload.foto_url
+      const file = fotoFiles[payload.id]
+      if (file) {
+        const path = `discipulos/${baseId}/${payload.id}_${Date.now()}_${file.name.replace(/\s+/g, '_')}`
+        foto_url = await db.uploadArquivo('anc-media', path, file)
+        setFotoFiles(prev => { const n = { ...prev }; delete n[payload.id]; return n })
+      }
+      return db.updateDiscipulosCartao({ ...payload, foto_url })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes', baseId, ano, tipo] })
+      qc.invalidateQueries({ queryKey: ['discipulos_cartoes_notas'] })
       toast.success('Cartão atualizado com sucesso!')
     },
     onError: (e) => toast.error('Erro ao atualizar cartão: ' + e.message),
@@ -1341,11 +1298,23 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     mutationFn: (id) => db.deleteDiscipulosCartao(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes', baseId, ano, tipo] })
-      qc.invalidateQueries({ queryKey: ['discipulos_registros', baseId, ano, tipo] })
+      qc.invalidateQueries({ queryKey: ['discipulos_cartoes_notas'] })
       toast.success('Cartão excluído.')
     },
     onError: (e) => toast.error('Erro ao excluir cartão: ' + e.message),
   })
+
+  function handleToggleMembro(membroId) {
+    const isOpen = expanded[membroId]
+    const drafts = draftCartoes[membroId] || []
+    if (isOpen && drafts.length > 0) {
+      if (!window.confirm(`Este aluno tem ${drafts.length} cartão(ões) não salvo(s). Ao fechar, os rascunhos serão descartados. Deseja continuar?`)) {
+        return
+      }
+      setDraftCartoes(prev => ({ ...prev, [membroId]: [] }))
+    }
+    setExpanded(e => ({ ...e, [membroId]: !e[membroId] }))
+  }
 
   if (!baseId) return (
     <div className="card empty-state">
@@ -1354,7 +1323,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
     </div>
   )
 
-  if (loadingRegs || loadingCartoes) return <div className="card empty-state"><div className="spinner" /></div>
+  if (loadingCartoes) return <div className="card empty-state"><div className="spinner" /></div>
 
   if (membros.length === 0) return (
     <div className="card empty-state">
@@ -1373,10 +1342,8 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
         const isOpen = Boolean(expanded[membroId])
         const cards = cartoesByMembro[membroId] ?? []
         const drafts = draftCartoes[membroId] ?? []
-        const pts = cards.reduce((sum, c) => sum + pontosDoCartao(c.id), 0)
-        const completos = cards.reduce((sum, c) => sum + completosDoCartao(c.id), 0)
-        const totalReqs = catalogo.length
-        const maxReqMembro = totalReqs * cards.length
+        const temCartaoAtivo = cards.some(c => c.data_inicio)
+        const temCartaoEncerrado = cards.some(c => c.data_fim)
 
         return (
           <div key={membroId} className="card" style={{ marginBottom: 10 }}>
@@ -1403,30 +1370,20 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                       · {drafts.length} rascunho(s) não salvo(s)
                     </span>
                   )}
-                  {maxReqMembro > 0 && <span> · {completos}/{maxReqMembro} requisitos</span>}
-                  {pts > 0 && <span style={{ color: isSoul ? 'var(--soul-brown)' : 'var(--c2)', marginLeft: 6 }}>· {pts} pts</span>}
+                  {temCartaoAtivo && !temCartaoEncerrado && <span style={{ color: 'var(--c2)', marginLeft: 6 }}>· em andamento</span>}
+                  {temCartaoEncerrado && <span style={{ color: 'var(--good)', marginLeft: 6 }}>· encerrado</span>}
                 </div>
               </div>
-              {cards.length > 0 && completos === maxReqMembro && maxReqMembro > 0 && (
-                <span className="chip chip-good" style={{ fontSize: 11 }}>🏆 Completo</span>
+              {temCartaoEncerrado && (
+                <span className="chip chip-good" style={{ fontSize: 11 }}>🏁 Concluído</span>
               )}
               <span style={{ opacity: 0.4, fontSize: 12 }}>{isOpen ? '▲' : '▼'}</span>
             </button>
 
-            {maxReqMembro > 0 && (
-              <div style={{ height: 3, background: isSoul ? 'rgba(62,32,0,.08)' : 'rgba(255,255,255,.07)' }}>
-                <div style={{
-                  width: `${(completos / maxReqMembro) * 100}%`, height: '100%',
-                  background: completos === maxReqMembro ? 'var(--good)' : 'var(--c1)',
-                  transition: 'width .4s',
-                }} />
-              </div>
-            )}
-
             {isOpen && (
               <div style={{ borderTop: '1px solid ' + (isSoul ? 'rgba(62,32,0,.1)' : 'rgba(255,255,255,.08)'), padding: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>Cada cartão possui progresso e pontuação independentes. Preencha departamento e data de início e salve para valer nas notas.</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>Preencha o departamento e a data de início para ativar o discipulado nas notas. A pontuação completa é gerada ao incluir a data final.</div>
                   <button
                     className="btn btn-primary"
                     onClick={() => handleAddCartao(membroId, cards.length, drafts.length)}
@@ -1443,10 +1400,6 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                 )}
 
                 {cards.map((card, idx) => {
-                  const regsCard = registrosByCartao[card.id] ?? {}
-                  const completosCard = completosDoCartao(card.id)
-                  const pontosCard = pontosDoCartao(card.id)
-                  const pctCard = totalReqs > 0 ? Math.round((completosCard / totalReqs) * 100) : 0
                   const cardMeta = metaCartao[card.id] ?? {
                     nome: card.nome ?? `Cartão ${idx + 1}`,
                     departamento: card.departamento ?? '',
@@ -1456,46 +1409,55 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                     observacoes_professor: card.observacoes_professor ?? '',
                   }
                   const podeSalvarMeta = Boolean(cardMeta.departamento?.trim() && cardMeta.data_inicio)
-                  const podeEncerrar = completosCard === totalReqs || Boolean(cardMeta.observacoes_professor?.trim())
-                  const tentantoEncerrarSemPermissao = Boolean(cardMeta.data_fim && !podeEncerrar)
+                  const isEncerrado = Boolean(cardMeta.data_fim)
+
+                  const LABEL_STYLE = { fontSize: 10, fontWeight: 700, opacity: 0.55, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2, display: 'block' }
 
                   return (
                     <div key={card.id} className="card" style={{ marginBottom: 10 }}>
-                      <div style={{ padding: 12, borderBottom: '1px solid ' + (isSoul ? 'rgba(62,32,0,.1)' : 'rgba(255,255,255,.08)') }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto auto', gap: 8 }}>
-                          <input
-                            value={cardMeta.nome}
-                            onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, nome: e.target.value } }))}
-                            placeholder={`Cartão ${idx + 1}`}
-                          />
-                          <input
-                            value={cardMeta.departamento}
-                            onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, departamento: e.target.value } }))}
-                            list={`deps-${card.id}`}
-                            placeholder="Departamento / discipulado"
-                          />
-                          <input
-                            type="date"
-                            value={cardMeta.data_inicio}
-                            onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, data_inicio: e.target.value } }))}
-                            placeholder="Data de início"
-                          />
-                          <input
-                            type="date"
-                            value={cardMeta.data_fim}
-                            onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, data_fim: e.target.value } }))}
-                            placeholder="Data final"
-                            disabled={!podeEncerrar && !cardMeta.data_fim}
-                          />
+                      <div style={{ padding: 12 }}>
+                        {/* Linha 1 — campos principais com labels */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto auto', gap: 8, alignItems: 'end' }}>
+                          <div>
+                            <label style={LABEL_STYLE}>Nome do cartão</label>
+                            <input
+                              value={cardMeta.nome}
+                              onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, nome: e.target.value } }))}
+                              placeholder={`Cartão ${idx + 1}`}
+                            />
+                          </div>
+                          <div>
+                            <label style={LABEL_STYLE}>Departamento / ministério *</label>
+                            <input
+                              value={cardMeta.departamento}
+                              onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, departamento: e.target.value } }))}
+                              list={`deps-${card.id}`}
+                              placeholder="Ex.: Música, Mídia, Infantil…"
+                              style={{ borderColor: !cardMeta.departamento?.trim() ? 'var(--warn)' : undefined }}
+                            />
+                          </div>
+                          <div>
+                            <label style={LABEL_STYLE}>Data de início *</label>
+                            <input
+                              type="date"
+                              value={cardMeta.data_inicio}
+                              onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, data_inicio: e.target.value } }))}
+                              style={{ borderColor: !cardMeta.data_inicio ? 'var(--warn)' : undefined }}
+                            />
+                          </div>
+                          <div>
+                            <label style={LABEL_STYLE}>Data de encerramento</label>
+                            <input
+                              type="date"
+                              value={cardMeta.data_fim}
+                              onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, data_fim: e.target.value } }))}
+                            />
+                          </div>
                           <button
                             className="btn btn-secondary"
                             onClick={() => {
                               if (!podeSalvarMeta) {
                                 toast.error('Preencha departamento e data de início para salvar o cartão.')
-                                return
-                              }
-                              if (tentantoEncerrarSemPermissao) {
-                                toast.error('A data final só pode ser usada após concluir todos os itens ou registrar observação do professor.')
                                 return
                               }
                               saveMetaCartao.mutate({
@@ -1506,6 +1468,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                                 data_inicio: cardMeta.data_inicio,
                                 data_fim: cardMeta.data_fim,
                                 observacoes_professor: cardMeta.observacoes_professor,
+                                foto_url: card.foto_url ?? undefined,
                               })
                             }}
                             disabled={saveMetaCartao.isPending}
@@ -1518,7 +1481,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                             title="Excluir cartão"
                             disabled={deleteCartao.isPending}
                             onClick={() => {
-                              if (!window.confirm(`Excluir "${card.nome ?? `Cartão ${idx + 1}`}"? Todos os registros deste cartão serão removidos e esta ação não pode ser desfeita.`)) return
+                              if (!window.confirm(`Excluir "${card.nome ?? `Cartão ${idx + 1}`}"? Esta ação não pode ser desfeita.`)) return
                               deleteCartao.mutate(card.id)
                             }}
                           >
@@ -1529,63 +1492,70 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                           </datalist>
                         </div>
 
+                        {/* Linha 2 — descrição */}
                         <div style={{ marginTop: 8 }}>
+                          <label style={LABEL_STYLE}>Descrição / foco do discipulado</label>
                           <input
                             value={cardMeta.descricao}
                             onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, descricao: e.target.value } }))}
-                            placeholder="Descrição (área de atuação, foco do discipulado…)"
+                            placeholder="Área de atuação, foco do discipulado, contexto do ministério…"
                             style={{ width: '100%' }}
                           />
                         </div>
 
+                        {/* Linha 3 — observações */}
                         <div style={{ marginTop: 8 }}>
+                          <label style={LABEL_STYLE}>Observações do professor</label>
                           <textarea
                             value={cardMeta.observacoes_professor}
                             onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, observacoes_professor: e.target.value } }))}
-                            placeholder="Observações do professor / motivo de encerramento antecipado"
+                            placeholder="Motivo de encerramento antecipado, anotações, destaques do professor…"
                             rows={2}
                             style={{ width: '100%', resize: 'vertical' }}
                           />
                         </div>
 
-                        <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7 }}>
-                          {completosCard}/{totalReqs} requisitos · {pontosCard} pts · {pctCard}%
-                          {card.departamento && card.data_inicio && <span> · válido para discipulado nas notas</span>}
-                          {tentantoEncerrarSemPermissao && <span style={{ color: 'var(--warn)' }}> · data final exige conclusão ou observação</span>}
-                        </div>
-                      </div>
-
-                      <div className="table-wrap">
-                        <table>
-                          <thead>
-                            <tr>
-                              <th style={{ width: 32, textAlign: 'center' }}>#</th>
-                              <th>Requisito</th>
-                              <th style={{ width: 95, textAlign: 'center' }}>Sim/Não</th>
-                              <th style={{ width: 120 }}>Data</th>
-                              <th style={{ minWidth: 150 }}>Responsável</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {catalogo.map(req => (
-                              <DiscipuloReqRow
-                                key={`${card.id}-${req.id}`}
-                                req={req}
-                                reg={regsCard[req.id]}
-                                isAdmin={isAdmin}
-                                isAuditMode={isAuditMode}
-                                onSave={(vals) => upsertReg.mutateAsync({
-                                  membro_id: membroId,
-                                  base_id: baseId,
-                                  card_id: card.id,
-                                  requisito_id: req.id,
-                                  ano,
-                                  ...vals,
-                                })}
+                        {/* Linha 4 — foto (habilitada só ao encerrar) */}
+                        {isEncerrado && (
+                          <div style={{ marginTop: 8 }}>
+                            <label style={LABEL_STYLE}>Foto / comprovante do cartão (JPG, PNG, PDF…)</label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <input
+                                type="file"
+                                accept="image/*,application/pdf"
+                                style={{ fontSize: 12 }}
+                                onChange={e => setFotoFiles(prev => ({ ...prev, [card.id]: e.target.files?.[0] || null }))}
                               />
-                            ))}
-                          </tbody>
-                        </table>
+                              {card.foto_url && (
+                                <a
+                                  href={card.foto_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ fontSize: 12, color: 'var(--c1)' }}
+                                >
+                                  📎 Ver comprovante atual
+                                </a>
+                              )}
+                              {fotoFiles[card.id] && (
+                                <span style={{ fontSize: 11, opacity: 0.65 }}>
+                                  {fotoFiles[card.id].name} — salve o cartão para enviar
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Status bar */}
+                        <div style={{ marginTop: 8, fontSize: 11, opacity: 0.7, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          {cardMeta.data_inicio
+                            ? <span style={{ color: 'var(--good)' }}>✅ Ativo para notas a partir de {cardMeta.data_inicio}</span>
+                            : <span style={{ color: 'var(--warn)' }}>⚠️ Preencha departamento e data de início para ativar nas notas</span>
+                          }
+                          {isEncerrado
+                            ? <span style={{ color: 'var(--good)' }}>🏁 Encerrado em {cardMeta.data_fim} · pontuação completa</span>
+                            : cardMeta.data_inicio && <span>Em andamento · ½ pontuação ativa</span>
+                          }
+                        </div>
                       </div>
                     </div>
                   )
@@ -1595,6 +1565,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                 {drafts.map((draft, draftIdx) => {
                   const podeSalvarDraft = Boolean(draft.departamento?.trim() && draft.data_inicio)
                   const ordemVisual = cards.length + draftIdx + 1
+                  const LABEL_STYLE = { fontSize: 10, fontWeight: 700, opacity: 0.55, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 2, display: 'block' }
                   return (
                     <div key={draft._draftId} className="card" style={{ marginBottom: 10, border: '2px dashed var(--warn)' }}>
                       <div style={{ padding: '8px 12px 4px', display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,190,0,.06)', borderBottom: '1px solid rgba(255,190,0,.2)' }}>
@@ -1602,31 +1573,42 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                         <span style={{ fontSize: 11, opacity: 0.65 }}>Preencha departamento e data de início para salvar.</span>
                       </div>
                       <div style={{ padding: 12 }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto auto', gap: 8 }}>
-                          <input
-                            value={draft.nome}
-                            onChange={e => updateDraft(membroId, draft._draftId, 'nome', e.target.value)}
-                            placeholder={`Cartão ${ordemVisual}`}
-                          />
-                          <input
-                            value={draft.departamento}
-                            onChange={e => updateDraft(membroId, draft._draftId, 'departamento', e.target.value)}
-                            list={`deps-draft-${draft._draftId}`}
-                            placeholder="Departamento * (obrigatório)"
-                            style={{ borderColor: !draft.departamento?.trim() ? 'var(--warn)' : undefined }}
-                          />
-                          <input
-                            type="date"
-                            value={draft.data_inicio}
-                            onChange={e => updateDraft(membroId, draft._draftId, 'data_inicio', e.target.value)}
-                            style={{ borderColor: !draft.data_inicio ? 'var(--warn)' : undefined }}
-                          />
-                          <input
-                            type="date"
-                            value={draft.data_fim}
-                            onChange={e => updateDraft(membroId, draft._draftId, 'data_fim', e.target.value)}
-                            placeholder="Data final"
-                          />
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto auto', gap: 8, alignItems: 'end' }}>
+                          <div>
+                            <label style={LABEL_STYLE}>Nome do cartão</label>
+                            <input
+                              value={draft.nome}
+                              onChange={e => updateDraft(membroId, draft._draftId, 'nome', e.target.value)}
+                              placeholder={`Cartão ${ordemVisual}`}
+                            />
+                          </div>
+                          <div>
+                            <label style={LABEL_STYLE}>Departamento / ministério *</label>
+                            <input
+                              value={draft.departamento}
+                              onChange={e => updateDraft(membroId, draft._draftId, 'departamento', e.target.value)}
+                              list={`deps-draft-${draft._draftId}`}
+                              placeholder="Ex.: Música, Mídia, Infantil…"
+                              style={{ borderColor: !draft.departamento?.trim() ? 'var(--warn)' : undefined }}
+                            />
+                          </div>
+                          <div>
+                            <label style={LABEL_STYLE}>Data de início *</label>
+                            <input
+                              type="date"
+                              value={draft.data_inicio}
+                              onChange={e => updateDraft(membroId, draft._draftId, 'data_inicio', e.target.value)}
+                              style={{ borderColor: !draft.data_inicio ? 'var(--warn)' : undefined }}
+                            />
+                          </div>
+                          <div>
+                            <label style={LABEL_STYLE}>Data de encerramento</label>
+                            <input
+                              type="date"
+                              value={draft.data_fim}
+                              onChange={e => updateDraft(membroId, draft._draftId, 'data_fim', e.target.value)}
+                            />
+                          </div>
                           <button
                             className="btn btn-primary"
                             onClick={() => {
@@ -1659,19 +1641,20 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
                           </datalist>
                         </div>
                         <div style={{ marginTop: 8 }}>
+                          <label style={LABEL_STYLE}>Descrição / foco do discipulado</label>
                           <input
                             value={draft.descricao}
                             onChange={e => updateDraft(membroId, draft._draftId, 'descricao', e.target.value)}
-                            placeholder="Descrição (área de atuação, foco do discipulado…)"
+                            placeholder="Área de atuação, foco do discipulado, contexto do ministério…"
                             style={{ width: '100%' }}
                           />
                         </div>
-
                         <div style={{ marginTop: 8 }}>
+                          <label style={LABEL_STYLE}>Observações do professor</label>
                           <textarea
                             value={draft.observacoes_professor}
                             onChange={e => updateDraft(membroId, draft._draftId, 'observacoes_professor', e.target.value)}
-                            placeholder="Observações do professor"
+                            placeholder="Motivo de encerramento antecipado, anotações, destaques…"
                             rows={2}
                             style={{ width: '100%', resize: 'vertical' }}
                           />
@@ -1686,102 +1669,6 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
         )
       })}
     </div>
-  )
-}
-
-function DiscipuloReqRow({ req, reg, isAdmin, isAuditMode, onSave }) {
-  const locked = Boolean(reg?.realizado && reg?.data_realizacao && reg?.responsavel)
-  const editable = !locked || isAdmin || isAuditMode
-
-  const [local, setLocal] = useState({
-    realizado: reg?.realizado ?? false,
-    data_realizacao: reg?.data_realizacao ?? '',
-    responsavel: reg?.responsavel ?? '',
-  })
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (!saving) {
-      setLocal({
-        realizado: reg?.realizado ?? false,
-        data_realizacao: reg?.data_realizacao ?? '',
-        responsavel: reg?.responsavel ?? '',
-      })
-    }
-  }, [reg?.id, reg?.realizado, reg?.data_realizacao, reg?.responsavel])
-
-  async function save(vals) {
-    setSaving(true)
-    try { await onSave(vals) }
-    catch (e) { toast.error(e.message) }
-    finally { setSaving(false) }
-  }
-
-  async function handleToggle() {
-    if (!editable || saving) return
-    const vals = { ...local, realizado: !local.realizado }
-    setLocal(vals)
-    await save(vals)
-  }
-
-  async function handleBlur() {
-    if (saving) return
-    await save(local)
-  }
-
-  return (
-    <tr style={{ opacity: locked && !editable ? 0.7 : 1 }}>
-      <td style={{ textAlign: 'center', fontWeight: 700, fontSize: 13 }}>{req.numero}</td>
-      <td>
-        <div style={{ fontSize: 12, lineHeight: 1.45 }}>
-          {req.descricao.length > 140 ? req.descricao.slice(0, 137) + '…' : req.descricao}
-        </div>
-        {Number(req.pontos) > 0 && (
-          <span style={{ fontSize: 10, color: 'var(--c2)', opacity: 0.75 }}>+{req.pontos} pts</span>
-        )}
-      </td>
-      <td style={{ textAlign: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-          <button
-            onClick={handleToggle}
-            disabled={!editable || saving}
-            style={{
-              padding: '3px 10px', borderRadius: 6, border: '1px solid',
-              borderColor: local.realizado ? 'var(--good)' : 'rgba(255,255,255,.2)',
-              background: local.realizado ? 'rgba(56,242,163,.18)' : 'transparent',
-              color: local.realizado ? 'var(--good)' : 'var(--muted)',
-              cursor: editable ? 'pointer' : 'not-allowed', fontWeight: 600, fontSize: 12,
-              minWidth: 58, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            {saving
-              ? <span className="spinner" style={{ width: 10, height: 10 }} />
-              : local.realizado ? '✅ Sim' : '❌ Não'}
-          </button>
-          {locked && <span title="Bloqueado — todos campos preenchidos" style={{ fontSize: 13 }}>🔒</span>}
-        </div>
-      </td>
-      <td>
-        <input
-          type="date"
-          value={local.data_realizacao}
-          onChange={e => setLocal(l => ({ ...l, data_realizacao: e.target.value }))}
-          onBlur={handleBlur}
-          disabled={!editable || !local.realizado}
-          style={{ width: '100%', opacity: editable && local.realizado ? 1 : 0.35 }}
-        />
-      </td>
-      <td>
-        <input
-          value={local.responsavel}
-          onChange={e => setLocal(l => ({ ...l, responsavel: e.target.value }))}
-          onBlur={handleBlur}
-          placeholder="Responsável..."
-          disabled={!editable}
-          style={{ width: '100%', opacity: editable ? 1 : 0.35 }}
-        />
-      </td>
-    </tr>
   )
 }
 

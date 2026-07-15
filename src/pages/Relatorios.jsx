@@ -6,6 +6,7 @@ import { db } from '../api/db'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
 import { isProvaTitulo } from '../lib/desafiosPontuacao'
+import { marcarDuplicados, corDuplicidade } from '../utils/duplicidade'
 
 function gerarSabados(primeiro, ultimo) {
   const sabados = []
@@ -340,9 +341,16 @@ export default function Relatorios() {
       </span>
     )
 
+    const dupStyle = nota.isDuplicado
+      ? { background: corDuplicidade(nota.duplicidadeIntensidade), boxShadow: 'inset 3px 0 0 var(--bad)' }
+      : undefined
+    const dupTitle = nota.isDuplicado
+      ? `⚠ Possível duplicidade: ${nota.duplicidadeTotal} lançamentos para a mesma base/criança/prova${nota.duplicidadeMaisRecente ? ' — este é o mais recente' : ' — lançamento anterior'}.`
+      : undefined
+
     if (edit) {
       return (
-        <tr>
+        <tr style={dupStyle} title={dupTitle}>
           <td></td>
           <td><strong>{nota.Membros}</strong></td>
           <td>
@@ -373,9 +381,16 @@ export default function Relatorios() {
     }
 
     return (
-      <tr>
+      <tr style={dupStyle} title={dupTitle}>
         <td style={{ width: 40 }}><span className="row-num">#</span></td>
-        <td><strong>{nota.Membros}</strong></td>
+        <td>
+          <strong>{nota.Membros}</strong>
+          {nota.isDuplicado && (
+            <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: 'var(--bad)' }}>
+              ⚠ {nota.duplicidadeMaisRecente ? 'duplicado (mais recente)' : 'duplicado'}
+            </span>
+          )}
+        </td>
         <td style={{ textAlign: 'center' }}>
           <span style={{ fontWeight: 800, color: 'var(--c2)', fontSize: 15 }}>{nota.Nota}</span>
         </td>
@@ -541,10 +556,27 @@ export default function Relatorios() {
                   if (isPA && !isPB) return 1
                   if (!isPA && isPB) return -1
                   return ((listA[0]?.data || listA[0]?.Data) || '').localeCompare((listB[0]?.data || listB[0]?.Data) || '')
-                }).map(([prova, lista]) => (
+                }).map(([prova, lista]) => {
+                  // Duplicidade = mesma criança lançada 2x+ nesta base+prova
+                  // (o grupo já está restrito a essa base+prova). O
+                  // lançamento mais recente fica em vermelho mais intenso.
+                  const listaMarcada = marcarDuplicados(lista, {
+                    keyOf: n => n.id_membros ? String(n.id_membros) : (n.Membros ? `nome:${n.Membros}` : null),
+                    timeOf: n => n.lancado_em || n.created_at,
+                    dataOf: n => n.data || n.Data,
+                  })
+                  const qtdDuplicados = listaMarcada.filter(n => n.isDuplicado).length
+                  return (
                   <div key={prova} style={{ marginBottom: 24 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
-                      <span style={{ fontWeight: 800, color: 'var(--c2)' }}>📝 {prova}</span>
+                      <span style={{ fontWeight: 800, color: 'var(--c2)' }}>
+                        📝 {prova}
+                        {qtdDuplicados > 0 && (
+                          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 800, color: 'var(--bad)' }}>
+                            ⚠ {qtdDuplicados} lançamento{qtdDuplicados !== 1 ? 's' : ''} duplicado{qtdDuplicados !== 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </span>
                       <span style={{ fontSize: 11, opacity: 0.6 }}>{fmtDate(lista[0]?.data || lista[0]?.Data)}</span>
                     </div>
                     <div className="table-wrap" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -575,14 +607,15 @@ export default function Relatorios() {
                           </tr>
                         </thead>
                         <tbody>
-                          {lista.sort((a,b) => (a.Membros || a.nome_aluno || '').localeCompare(b.Membros || b.nome_aluno || '')).map(n => (
+                          {listaMarcada.sort((a,b) => (a.Membros || a.nome_aluno || '').localeCompare(b.Membros || b.nome_aluno || '')).map(n => (
                             <LinhaNota key={n.id || n.id_membros + n.id_form} nota={n} tipo={tab} />
                           ))}
                         </tbody>
                       </table>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           ))}
@@ -630,14 +663,14 @@ function DesempenhoTab() {
     queryKey: ['ranking_notas', ano],
     queryFn: () => db.getAllNotasTeenPorAno(ano),
   })
-  const { data: discipulosRegs = [], isLoading: loadingDisc } = useQuery({
-    queryKey: ['all_discipulos', ano],
-    queryFn: () => db.getAllDiscipulosRegistrosPorAno(ano),
+  const { data: discipulosCartoes = [], isLoading: loadingDisc } = useQuery({
+    queryKey: ['all_discipulos_cartoes', ano],
+    queryFn: () => db.getAllDiscipulosCartoesPorAno(ano),
     staleTime: 2 * 60 * 1000,
   })
-  const { data: discipulosCatalogo = [] } = useQuery({
-    queryKey: ['discipulos_catalogo'],
-    queryFn: () => db.getDiscipulosRequisitoCatalogo(),
+  const { data: discipulosConfig = null } = useQuery({
+    queryKey: ['discipulos_config'],
+    queryFn: () => db.getDiscipulosConfig(),
     staleTime: 10 * 60 * 1000,
   })
   const { data: batismosRegs = [], isLoading: loadingBat } = useQuery({
@@ -701,19 +734,30 @@ function DesempenhoTab() {
     return result
   }, [todasNotas, trimestre, trimestreConfigAtivo, mesesTrimestreAtivo])
 
+  // Pontos de discípulos por base:
+  // — só o primeiro cartão (ordem = 1) de cada membro conta
+  // — metade dos pontos ao ativar (data_inicio), total ao encerrar (data_fim)
   const discipulosPtsPorBase = useMemo(() => {
-    if (!discipulosCatalogo.length) return {}
-    const pontosReq = Object.fromEntries(discipulosCatalogo.map(r => [r.id, Number(r.pontos ?? 0)]))
+    const ptsPorCartao = Number(discipulosConfig?.pontos_por_cartao ?? 0)
+    if (!ptsPorCartao || !discipulosCartoes.length) return {}
+
+    const primeiros = {}
+    discipulosCartoes.forEach(card => {
+      const key = `${card.base_id}|${card.membro_id}`
+      if (!primeiros[key] || (card.ordem ?? 999) < (primeiros[key].ordem ?? 999)) {
+        primeiros[key] = card
+      }
+    })
+
     const map = {}
-    discipulosRegs.forEach(r => {
-      if (!r.realizado || !r.data_realizacao || !r.responsavel) return
-      if (!rowIsInsideSelectedQuarter(r.data_realizacao)) return
-      const pts = pontosReq[r.requisito_id] ?? 0
-      if (!pts) return
-      map[r.base_id] = (map[r.base_id] ?? 0) + pts
+    Object.values(primeiros).forEach(card => {
+      if (!card.data_inicio) return
+      if (!rowIsInsideSelectedQuarter(card.data_inicio)) return
+      const pts = card.data_fim ? ptsPorCartao : ptsPorCartao / 2
+      map[card.base_id] = (map[card.base_id] ?? 0) + pts
     })
     return map
-  }, [discipulosRegs, discipulosCatalogo, trimestre, trimestreConfigAtivo, mesesTrimestreAtivo])
+  }, [discipulosCartoes, discipulosConfig, trimestre, trimestreConfigAtivo, mesesTrimestreAtivo])
 
   const batismosPtsPorBase = useMemo(() => {
     const ptsPorBatismo = Number(batismosConfig?.pontos_por_batismo ?? 0)
@@ -1164,7 +1208,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
   }, [membros, tipo, baseId])
 
   const historico = useMemo(() => {
-    return notasAll
+    const linhas = notasAll
       .filter(n => {
         if (tipo && n._tipo !== tipo) return false
         if (baseId && String(n.id_base || '') !== String(baseId)) return false
@@ -1174,7 +1218,11 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
       .map(n => {
         const dataIso = toIsoDate(n.data || n.Data)
         return {
+          id: n.id ?? null,
           id_base: n.id_base || '',
+          id_provas: n.id_provas ?? n.prova_id ?? '',
+          id_membros: n.id_membros ?? '',
+          lancadoEm: n.lancado_em || n.created_at || n.saved_at || null,
           dataIso,
           data: fmtDate(dataIso),
           tipo: n._tipo,
@@ -1188,6 +1236,15 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
       })
       .filter(r => r.dataIso)
       .sort((a, b) => a.dataIso.localeCompare(b.dataIso))
+
+    // Duplicidade = mesma base + mesma criança + mesmo registro de prova,
+    // mesmo que os demais dados sejam diferentes. O lançamento mais recente
+    // (por lancado_em, com fallback pra data) recebe vermelho mais intenso.
+    return marcarDuplicados(linhas, {
+      keyOf: r => (r.id_base && r.id_membros && r.id_provas) ? `${r.id_base}|${r.id_membros}|${r.id_provas}` : null,
+      timeOf: r => r.lancadoEm,
+      dataOf: r => r.dataIso,
+    })
   }, [notasAll, tipo, baseId, membroId])
 
   const anoRef = useMemo(() => {
@@ -1451,11 +1508,11 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
 
     const historicoRows = historico
       .map((r, i) => `
-        <tr>
+        <tr${r.isDuplicado ? ` style="background:${corDuplicidade(r.duplicidadeIntensidade)};"` : ''}>
           <td>${i + 1}</td>
           <td>${escapeHtml(r.data)}</td>
           <td>${escapeHtml(r.tipo)}</td>
-          <td>${escapeHtml(r.prova)}</td>
+          <td>${escapeHtml(r.prova)}${r.isDuplicado ? ` <strong style="color:#c81e3a;">⚠ duplicado${r.duplicidadeMaisRecente ? ' (mais recente)' : ''}</strong>` : ''}</td>
           <td>${escapeHtml(r.base)}</td>
           <td class="nota">${clampNota(r.nota).toFixed(1)}</td>
           <td>${escapeHtml(r.observacao || '—')}</td>
@@ -1790,12 +1847,28 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
               {historico.length === 0 ? (
                 <tr><td colSpan={7} style={{ textAlign: 'center', opacity: 0.6, padding: 20 }}>Selecione uma criança para visualizar o histórico.</td></tr>
               ) : historico.map((r, i) => (
-                <tr key={`${r.dataIso}-${r.prova}-${i}`}>
+                <tr
+                  key={`${r.dataIso}-${r.prova}-${i}`}
+                  style={r.isDuplicado ? {
+                    background: corDuplicidade(r.duplicidadeIntensidade),
+                    boxShadow: 'inset 3px 0 0 var(--bad)',
+                  } : undefined}
+                  title={r.isDuplicado
+                    ? `⚠ Possível duplicidade: ${r.duplicidadeTotal} lançamentos para a mesma base/criança/prova${r.duplicidadeMaisRecente ? ' — este é o mais recente' : ' — lançamento anterior'}.`
+                    : undefined}
+                >
                   <td>{r.data}</td>
                   <td>{r.tipo}</td>
                   <td><strong>{r.aluno}</strong></td>
                   <td>{r.base}</td>
-                  <td>{r.prova}</td>
+                  <td>
+                    {r.prova}
+                    {r.isDuplicado && (
+                      <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: 'var(--bad)' }}>
+                        ⚠ {r.duplicidadeMaisRecente ? 'duplicado (mais recente)' : 'duplicado'}
+                      </span>
+                    )}
+                  </td>
                   <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--c2)' }}>{r.nota}</td>
                   <td style={{ fontSize: 12, opacity: 0.8 }}>{r.observacao || '—'}</td>
                 </tr>

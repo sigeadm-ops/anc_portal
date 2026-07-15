@@ -823,15 +823,15 @@ function DesafiosCatalogoConfig({ filterMin }) {
   )
 }
 
-// ── COMPONENTE: Discípulos Teen — pesos e pontos por batismo ──
+// ── COMPONENTE: Discípulos Teen — pontos por cartão e por batismo ──
 function DiscipulosConfig() {
   const showError = useUIStore(s => s.showError)
   const { isAuditMode } = useAuthStore()
   const qc = useQueryClient()
 
-  const { data: catalogo = [], isLoading: loadingCatalogo } = useQuery({
-    queryKey: ['discipulos_catalogo'],
-    queryFn: () => db.getDiscipulosRequisitoCatalogo(),
+  const { data: discipulosCfg, isLoading: loadingDisc } = useQuery({
+    queryKey: ['discipulos_config'],
+    queryFn: () => db.getDiscipulosConfig(),
   })
 
   const { data: batismosCfg, isLoading: loadingBat } = useQuery({
@@ -839,27 +839,22 @@ function DiscipulosConfig() {
     queryFn: () => db.getBatismosConfig(),
   })
 
+  const [pontosCartao, setPontosCartao] = useState('')
   const [pontosBatismo, setPontosBatismo] = useState('')
-  const [editingPontos, setEditingPontos] = useState({}) // { [id]: valor }
 
-  // Sincroniza campo local com dados carregados
+  useEffect(() => {
+    if (discipulosCfg) setPontosCartao(String(discipulosCfg.pontos_por_cartao ?? 0))
+  }, [discipulosCfg])
+
   useEffect(() => {
     if (batismosCfg) setPontosBatismo(String(batismosCfg.pontos_por_batismo ?? 0))
   }, [batismosCfg])
 
-  useEffect(() => {
-    if (catalogo.length) {
-      const init = {}
-      catalogo.forEach(r => { init[r.id] = String(r.pontos ?? 0) })
-      setEditingPontos(init)
-    }
-  }, [catalogo])
-
-  const upsertRequisito = useMutation({
-    mutationFn: (payload) => db.upsertDiscipuloRequisitoCatalogo(payload),
+  const upsertDiscipulos = useMutation({
+    mutationFn: (payload) => db.upsertDiscipulosConfig(payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['discipulos_catalogo'] })
-      toast.success('Pontuação salva!')
+      qc.invalidateQueries({ queryKey: ['discipulos_config'] })
+      toast.success('Pontos por cartão salvos!')
     },
     onError: (e) => toast.error('Erro: ' + e.message),
   })
@@ -873,22 +868,54 @@ function DiscipulosConfig() {
     onError: (e) => toast.error('Erro: ' + e.message),
   })
 
-  function handleSalvarRequisito(req) {
-    upsertRequisito.mutate({
-      id: req.id,
-      numero: req.numero,
-      descricao: req.descricao,
-      pontos: Number(editingPontos[req.id] ?? 0),
-      ativo: req.ativo,
-    })
-  }
-
-  if (loadingCatalogo || loadingBat) {
+  if (loadingDisc || loadingBat) {
     return <div className="empty-state"><div className="spinner" /></div>
   }
 
   return (
     <div className="dimension-crud">
+      {/* Pontos por Cartão de Discipulado */}
+      <div className="card section">
+        <div className="card-header">
+          <div className="card-title">📖 Cartão Discípulo — Pontos por Cartão</div>
+        </div>
+        <div className="card-body">
+          <p style={{ fontSize: 13, opacity: 0.75, marginBottom: 14 }}>
+            Pontos totais que cada cartão de discipulado pode gerar para a base. A pontuação é
+            dividida em duas etapas: <strong>metade ao ativar</strong> (data de início preenchida) e
+            a <strong>outra metade ao encerrar</strong> (data final preenchida). Apenas o
+            primeiro cartão de cada membro conta para o ranking.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, maxWidth: 320 }}>
+            <div className="form-group" style={{ margin: 0, flex: 1 }}>
+              <label>Pontos totais por cartão</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={pontosCartao}
+                onChange={e => setPontosCartao(e.target.value)}
+                disabled={!isAuditMode}
+              />
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ marginTop: 20 }}
+              onClick={() => upsertDiscipulos.mutate({ pontos_por_cartao: Number(pontosCartao) })}
+              disabled={!isAuditMode || upsertDiscipulos.isPending}
+            >
+              {upsertDiscipulos.isPending ? <span className="spinner" /> : '💾 Salvar'}
+            </button>
+          </div>
+          {Number(pontosCartao) > 0 && (
+            <p style={{ fontSize: 12, opacity: 0.6, marginTop: 10 }}>
+              ½ ao ativar = <strong>{(Number(pontosCartao) / 2).toFixed(2)} pts</strong> &nbsp;·&nbsp;
+              completo = <strong>{Number(pontosCartao).toFixed(2)} pts</strong>
+            </p>
+          )}
+        </div>
+      </div>
+
       {/* Pontos por Batismo */}
       <div className="card section">
         <div className="card-header">
@@ -919,62 +946,6 @@ function DiscipulosConfig() {
               {upsertBatismos.isPending ? <span className="spinner" /> : '💾 Salvar'}
             </button>
           </div>
-        </div>
-      </div>
-
-      {/* 11 Requisitos do Cartão Discípulo */}
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">📖 Cartão Discípulo Teen — Pesos dos Requisitos</div>
-        </div>
-        <p style={{ fontSize: 13, opacity: 0.75, padding: '0 16px 12px' }}>
-          Defina quantos pontos cada requisito vale para o aluno. Os pontos só são computados
-          quando os três campos (Sim, Data, Responsável) estiverem preenchidos.
-        </p>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 36, textAlign: 'center' }}>#</th>
-                <th>Requisito</th>
-                <th style={{ width: 100, textAlign: 'center' }}>Pontos</th>
-                <th style={{ width: 80, textAlign: 'center' }}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {catalogo.map(req => (
-                <tr key={req.id}>
-                  <td style={{ textAlign: 'center', fontWeight: 700 }}>{req.numero}</td>
-                  <td>
-                    <span style={{ fontSize: 13, lineHeight: 1.4 }}>
-                      {req.descricao.length > 120 ? req.descricao.slice(0, 117) + '…' : req.descricao}
-                    </span>
-                  </td>
-                  <td style={{ textAlign: 'center' }}>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={editingPontos[req.id] ?? ''}
-                      onChange={e => setEditingPontos(p => ({ ...p, [req.id]: e.target.value }))}
-                      disabled={!isAuditMode}
-                      style={{ width: 75, textAlign: 'center', fontWeight: 700 }}
-                    />
-                  </td>
-                  <td style={{ textAlign: 'center' }}>
-                    <button
-                      className="btn-icon"
-                      onClick={() => handleSalvarRequisito(req)}
-                      disabled={!isAuditMode || upsertRequisito.isPending}
-                      title="Salvar pontuação"
-                    >
-                      💾
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </div>
     </div>
