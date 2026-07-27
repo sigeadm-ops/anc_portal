@@ -1437,17 +1437,20 @@ export const db = {
   },
 
   async createDiscipulosCartao({ membro_id, base_id, ano, tipo = 'G148 Teen', nome, departamento, descricao, data_inicio, data_fim, observacoes_professor, foto_url }) {
-    const { count, error: countError } = await supabase
+    const { data: ultimoCartao, error: ultimoCartaoError } = await supabase
       .from('discipulos_cartoes')
-      .select('*', { count: 'exact', head: true })
+      .select('ordem')
       .eq('membro_id', membro_id)
       .eq('base_id', base_id)
       .eq('ano', ano)
       .eq('tipo', tipo)
+      .order('ordem', { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
-    if (countError) throw countError
+    if (ultimoCartaoError) throw ultimoCartaoError
 
-    const ordem = (count ?? 0) + 1
+    const ordem = (ultimoCartao?.ordem ?? 0) + 1
     const payload = {
       membro_id,
       base_id,
