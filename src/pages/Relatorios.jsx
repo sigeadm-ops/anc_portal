@@ -120,6 +120,7 @@ export default function Relatorios() {
   const [buscaNota, setBuscaNota] = useState('')
   const [filtroNotaProva, setFiltroNotaProva] = useState('')
   const [filtroNotaBase, setFiltroNotaBase] = useState('')
+  const [ordemNotaData, setOrdemNotaData] = useState('asc')
   const [tipoIndividual, setTipoIndividual] = useState('')
   const [baseIndividual, setBaseIndividual] = useState('')
   const [membroIndividual, setMembroIndividual] = useState('')
@@ -537,6 +538,15 @@ export default function Relatorios() {
                   <option value="">Todas as bases</option>
                   {basesNotaOpts.map((base) => <option key={base} value={base}>{base}</option>)}
                 </select>
+                <select
+                  value={ordemNotaData}
+                  onChange={e => setOrdemNotaData(e.target.value)}
+                  style={{ maxWidth: 200 }}
+                  title="Ordem dos registros/provas por data"
+                >
+                  <option value="asc">Data ↑ mais antigo primeiro</option>
+                  <option value="desc">Data ↓ mais recente primeiro</option>
+                </select>
                 <button className="btn btn-outline btn-sm" onClick={exportarCSVNotas}>📁 CSV</button>
                 <button className="btn btn-outline btn-sm" onClick={imprimir}>🖨️ PDF</button>
               </div>
@@ -550,12 +560,14 @@ export default function Relatorios() {
                 <div className="card-title">⛪ {base}</div>
               </div>
               <div className="card-body">
-                {Object.entries(provas).sort(([pA, listA], [pB, listB]) => {
-                  const isPA = (pA || '').toUpperCase().includes('PROVA')
-                  const isPB = (pB || '').toUpperCase().includes('PROVA')
-                  if (isPA && !isPB) return 1
-                  if (!isPA && isPB) return -1
-                  return ((listA[0]?.data || listA[0]?.Data) || '').localeCompare((listB[0]?.data || listB[0]?.Data) || '')
+                {Object.entries(provas).sort(([, listA], [, listB]) => {
+                  const isoDe = (lista) => {
+                    const isos = lista.map(n => toIsoDate(n.data || n.Data)).filter(Boolean).sort()
+                    return isos[0] || ''
+                  }
+                  const dA = isoDe(listA)
+                  const dB = isoDe(listB)
+                  return ordemNotaData === 'desc' ? dB.localeCompare(dA) : dA.localeCompare(dB)
                 }).map(([prova, lista]) => {
                   // Duplicidade = mesma criança lançada 2x+ nesta base+prova
                   // (o grupo já está restrito a essa base+prova). O
