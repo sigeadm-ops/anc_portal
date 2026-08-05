@@ -49,7 +49,7 @@ export function NotasForm({ tipo, sheetName }) {
   const { data: bases = [] }        = useTable('Bases')
   const { data: provas = [] }       = useTable('Provas')
   const { data: todosMembros = [] } = useTable('Membros')
-  const { isAdmin, isAuditMode } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const qc = useQueryClient()
 
   function invalidateRankingCaches() {
@@ -81,7 +81,7 @@ export function NotasForm({ tipo, sheetName }) {
     return d.toISOString().slice(0, 10)
   }
 
-  const canSeeAllProvas = isAdmin || isAuditMode
+  const canSeeAllProvas = isAdmin
   const lastSaturdayIso = useMemo(() => getLastSaturdayIso(), [])
   const nextSaturdayIso = useMemo(() => getNextSaturdayIso(), [])
   
@@ -173,6 +173,25 @@ export function NotasForm({ tipo, sheetName }) {
         return ka.localeCompare(kb) || String(a.lancado_em || '').localeCompare(String(b.lancado_em || ''))
       })
   }, [notasDaBase])
+
+  // Notas já existentes para a mesma criança + mesma prova nesta base
+  // (qualquer data) — usado para decidir, linha a linha, se o Salvar deve
+  // ATUALIZAR o lançamento existente em vez de criar um novo (duplicado).
+  const existingNotaByMembro = useMemo(() => {
+    if (!meta.id_provas) return {}
+    const map = {}
+    notasDaBase.forEach(n => {
+      const idProva = String(n.id_provas ?? n.prova_id ?? '')
+      if (idProva !== String(meta.id_provas)) return
+      const membroKey = String(n.id_membros ?? '').trim()
+      if (!membroKey) return
+      const tempo = String(n.lancado_em || n.created_at || '')
+      const atual = map[membroKey]
+      const tempoAtual = atual ? String(atual.lancado_em || atual.created_at || '') : ''
+      if (!atual || tempo > tempoAtual) map[membroKey] = n
+    })
+    return map
+  }, [notasDaBase, meta.id_provas])
 
   function hasRequiredCardMeta(card) {
     // Basta ter data_inicio para o cartão ser considerado válido para notas
@@ -341,21 +360,53 @@ export function NotasForm({ tipo, sheetName }) {
   }
 
   const validRows = rows.filter(isRowValid)
+  const pendingUpdateCount = validRows.filter(r => existingNotaByMembro[String(r.id_membros ?? '').trim()]).length
   const metaOk   = meta.id_provas && meta.data && meta.responsavel.trim() && meta.id_base
   const taskGroupLabel = isSoul ? 'Soul Task' : '300'
   const taskTrainLabel = isSoul ? 'Soul Task Trein.' : '300 Trein.'
   const taskStudyLabel = isSoul ? 'Soul Task Est.' : '300 Est.'
 
   // ── Salvar ────────────────────────────────────────────────────
+  // Linha a linha: se já existe lançamento para esse aluno + essa prova
+  // nesta base, o Salvar ATUALIZA o registro existente (edição) em vez de
+  // inserir um novo — evita duplicidade sem exigir uma ação separada.
   const save = useMutation({
     mutationFn: async () => {
       const prova    = provasOpts.find(p => getProvaId(p) === meta.id_provas)
       const id_lote  = crypto.randomUUID()
 
-      const dbRows = validRows.map(r => {
+      const toInsert = []
+      const toUpdate = []
+
+      validRows.forEach(r => {
         const notaInformada = String(r.Nota ?? '').trim() !== ''
         const notaNumber = notaInformada ? Number(r.Nota) : null
-        return {
+        const membroKey = String(r.id_membros ?? '').trim()
+        const existente = membroKey ? existingNotaByMembro[membroKey] : null
+
+        if (existente) {
+          toUpdate.push({
+            id: existente.id,
+            nome: r.Membros,
+            fields: {
+              nota:                  notaNumber,
+              Nota:                  notaNumber,
+              comunhao:              r.Comunhao || null,
+              Comunhao:              r.Comunhao || null,
+              verso:                 r.Verso || null,
+              Verso:                 r.Verso || null,
+              discipulado:           r.Discipulado || null,
+              trezentos_treinamento: r.TrezentosTrainamento || null,
+              trezentos_estudo:      r.TrezentosEstudo || null,
+              observacoes:           r.Observacoes.trim() || null,
+              Observacoes:           r.Observacoes.trim() || null,
+              responsavel:           meta.responsavel,
+            },
+          })
+          return
+        }
+
+        toInsert.push({
           // Cada aluno precisa de chave própria para evitar colisão de PK.
           id_form:      crypto.randomUUID(),
           id_lote,
@@ -389,18 +440,23 @@ export function NotasForm({ tipo, sheetName }) {
           trezentos_estudo:      r.TrezentosEstudo || null,
           observacoes:           r.Observacoes.trim() || null,
           Observacoes:           r.Observacoes.trim() || null,
-        }
+        })
       })
 
-      const saved = await db.insertNotasForm(dbRows, sheetName, tableName)
-      let desafiosSyncError = null
+      const updated = await Promise.all(
+        toUpdate.map(u => db.updateNota(tableName, u.id, u.fields))
+      )
+      const inserted = toInsert.length > 0
+        ? await db.insertNotasForm(toInsert, sheetName, tableName)
+        : []
 
+      let desafiosSyncError = null
       try {
         await db.syncDesafiosAdministrativosFromNotas({
           base_id: meta.id_base,
           tipo: tipoBase,
           data_sabado: meta.data,
-          rows: dbRows,
+          rows: [...inserted, ...updated],
           responsavel: meta.responsavel,
         })
       } catch (error) {
@@ -408,11 +464,27 @@ export function NotasForm({ tipo, sheetName }) {
         console.warn('[Notas] Falha ao sincronizar desafios automaticamente apos salvar notas.', error)
       }
 
-      return { saved, desafiosSyncError }
+      return {
+        insertedCount: inserted.length,
+        updatedCount: updated.length,
+        updatedNomes: toUpdate.map(u => u.nome).filter(Boolean),
+        desafiosSyncError,
+      }
     },
-    onSuccess: ({ saved, desafiosSyncError }) => {
-      const n = saved.length
-      toast.success(`${n} nota${n !== 1 ? 's' : ''} salva${n !== 1 ? 's' : ''}! Base: ${meta.Base}`)
+    onSuccess: ({ insertedCount, updatedCount, updatedNomes, desafiosSyncError }) => {
+      const partes = []
+      if (insertedCount > 0) partes.push(`💾 ${insertedCount} nota${insertedCount !== 1 ? 's' : ''} nova${insertedCount !== 1 ? 's' : ''}`)
+      if (updatedCount > 0) partes.push(`✏️ ${updatedCount} nota${updatedCount !== 1 ? 's' : ''} atualizada${updatedCount !== 1 ? 's' : ''}`)
+      toast.success(`${partes.join(' + ')} — Base: ${meta.Base}`)
+
+      if (updatedCount > 0) {
+        toast((t) => (
+          <span>
+            Já existia lançamento desta prova para {updatedNomes.slice(0, 10).join(', ')}
+            {updatedNomes.length > 10 ? '…' : ''}: os dados foram <strong>atualizados</strong> no registro existente, nenhuma nota duplicada foi criada.
+          </span>
+        ), { icon: 'ℹ️', duration: 7000 })
+      }
       if (desafiosSyncError) {
         toast((t) => (
           <span>
@@ -421,6 +493,8 @@ export function NotasForm({ tipo, sheetName }) {
         ), { icon: '⚠️', duration: 6000 })
       }
       qc.invalidateQueries({ queryKey: [tableName] })
+      qc.invalidateQueries({ queryKey: ['notas_por_base'] })
+      qc.invalidateQueries({ queryKey: ['notas_existentes'] })
       qc.invalidateQueries({ queryKey: ['desafios_registros'] })
       qc.invalidateQueries({ queryKey: ['desafios_registros_ano'] })
       invalidateRankingCaches()
@@ -430,17 +504,6 @@ export function NotasForm({ tipo, sheetName }) {
   })
 
   function handleSalvar() {
-    if (notasExistentes.length > 0) {
-      const nomes = [...new Set(notasExistentes.map(n => n.Membros).filter(Boolean))]
-      const responsaveis = [...new Set(notasExistentes.map(n => n.responsavel).filter(Boolean))]
-      const continuar = confirm(
-        `Essa prova já tem ${notasExistentes.length} nota${notasExistentes.length !== 1 ? 's' : ''} lançada${notasExistentes.length !== 1 ? 's' : ''} para essa base e data` +
-        (responsaveis.length ? ` (por ${responsaveis.join(', ')})` : '') +
-        (nomes.length ? `:\n${nomes.slice(0, 10).join(', ')}${nomes.length > 10 ? '…' : ''}` : '') +
-        `\n\nSalvar de novo vai CRIAR notas adicionais, não substituir as existentes — pode gerar duplicidade. Deseja continuar mesmo assim?`
-      )
-      if (!continuar) return
-    }
     save.mutate()
   }
 
@@ -577,25 +640,28 @@ export function NotasForm({ tipo, sheetName }) {
         </div>
       )}
 
-      {/* ── Aviso quando essa prova+base+data já tem notas lançadas ── */}
+      {/* ── Aviso quando essa prova+base+data já tem notas lançadas ──
+          Não bloqueia mais o envio: ao salvar, cada aluno já lançado tem
+          seu registro ATUALIZADO automaticamente (edição), em vez de criar
+          uma nota duplicada. Este aviso é só informativo. ── */}
       {notasExistentes.length > 0 && (
         <div style={{
           marginBottom: 12, padding: '12px 16px', borderRadius: 8,
-          background: 'rgba(255,60,60,.12)', border: '2px solid var(--bad)',
+          background: 'rgba(56,140,255,.10)', border: '2px solid var(--c2, #388cff)',
           display: 'flex', alignItems: 'flex-start', gap: 10,
         }}>
-          <span style={{ fontSize: 20, flexShrink: 0 }}>🚫</span>
+          <span style={{ fontSize: 20, flexShrink: 0 }}>ℹ️</span>
           <div>
-            <div style={{ fontWeight: 700, color: 'var(--bad)', marginBottom: 4 }}>
-              ATENÇÃO — Essa prova já foi lançada para esta base!
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>
+              Essa prova já tem lançamentos para esta base
             </div>
             <div style={{ fontSize: 13 }}>
               {notasExistentes.length} nota{notasExistentes.length !== 1 ? 's' : ''} já registrada{notasExistentes.length !== 1 ? 's' : ''}{' '}
               {[...new Set(notasExistentes.map(n => n.responsavel).filter(Boolean))].length > 0
                 ? `por ${[...new Set(notasExistentes.map(n => n.responsavel).filter(Boolean))].join(', ')}`
                 : ''}.{' '}
-              Salvar novamente vai <strong>criar notas duplicadas</strong>.
-              Para corrigir um lançamento, use a tela de <strong>Relatórios</strong>.
+              Ao salvar, os alunos abaixo que já têm nota nesta prova serão marcados com <strong>✏️ Atualização</strong> e terão o
+              lançamento existente <strong>corrigido</strong> — não será criada nota duplicada.
             </div>
           </div>
         </div>
@@ -683,6 +749,11 @@ export function NotasForm({ tipo, sheetName }) {
                       style={{ minWidth: 180 }}
                     />
                   )}
+                  {existingNotaByMembro[String(row.id_membros ?? '').trim()] && (
+                    <div style={{ marginTop: 2, fontSize: 10, fontWeight: 700, color: 'var(--c2, #388cff)' }}>
+                      ✏️ Atualização (já lançado nesta prova)
+                    </div>
+                  )}
                 </td>
 
                 <td>
@@ -769,7 +840,9 @@ export function NotasForm({ tipo, sheetName }) {
         >
           {save.isPending
             ? <><span className="spinner" /> Salvando…</>
-            : `💾 Salvar ${validRows.length > 0 ? validRows.length : ''} nota${validRows.length !== 1 ? 's' : ''}`
+            : pendingUpdateCount > 0
+              ? `💾 Salvar (${validRows.length - pendingUpdateCount} nova${validRows.length - pendingUpdateCount !== 1 ? 's' : ''} + ✏️ ${pendingUpdateCount} atualização${pendingUpdateCount !== 1 ? 'ões' : ''})`
+              : `💾 Salvar ${validRows.length > 0 ? validRows.length : ''} nota${validRows.length !== 1 ? 's' : ''}`
           }
         </button>
       </div>
@@ -780,7 +853,7 @@ export function NotasForm({ tipo, sheetName }) {
 function NotasHistorico({ tipo, tableName }) {
   const { data: bases }  = useTable('Bases')
   const { data: provas } = useTable('Provas')
-  const { isAdmin, isAuditMode } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const qc = useQueryClient()
 
   function invalidateRankingCaches() {
@@ -797,7 +870,7 @@ function NotasHistorico({ tipo, tableName }) {
   const tipoBase        = tipo === 'soul' ? 'Soul+' : 'G148 Teen'
   const taskTrainLabel  = tipo === 'soul' ? 'Soul Task Trein.' : '300 Trein.'
   const taskStudyLabel  = tipo === 'soul' ? 'Soul Task Est.' : '300 Est.'
-  const canSeeAllProvas = isAdmin || isAuditMode
+  const canSeeAllProvas = isAdmin
   const lastSaturdayIso = useMemo(() => getLastSaturdayIso(), [])
 
   const provasFiltradas = useMemo(() => (provas || [])

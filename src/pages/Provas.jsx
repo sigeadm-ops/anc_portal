@@ -7,7 +7,7 @@ import { today, toInputDate, chipClass } from '../utils/helpers'
 const EMPTY = { tipo: '', nome: '', data: today() }
 
 export default function Provas() {
-  const { isAdmin, isAuditMode } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const { data, isLoading, insert, update, remove } = useTable('provas', 'TabProvas')
   const [form, setForm] = useState(EMPTY)
   const [editingId, setEditingId] = useState(null)
@@ -84,7 +84,7 @@ export default function Provas() {
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
             <button type="button" className="btn btn-outline" onClick={cancelEdit}>Limpar</button>
-            <button type="submit" className="btn btn-primary" disabled={insert.isPending || update.isPending || !isAuditMode}>
+            <button type="submit" className="btn btn-primary" disabled={insert.isPending || update.isPending || !isAdmin}>
               {(insert.isPending || update.isPending) ? <span className="spinner" /> : (editingId ? 'Atualizar' : 'Salvar')}
             </button>
           </div>
@@ -113,8 +113,8 @@ export default function Provas() {
                     <td>{p.data}</td>
                     <td>
                       <div className="td-actions">
-                        <button className="btn-icon" onClick={() => startEdit(p)} disabled={!isAuditMode}>✏️</button>
-                        <button className="btn-icon danger" onClick={() => handleDelete(p.id, p.nome)} disabled={!isAuditMode}>🗑️</button>
+                        <button className="btn-icon" onClick={() => startEdit(p)} disabled={!isAdmin}>✏️</button>
+                        <button className="btn-icon danger" onClick={() => handleDelete(p.id, p.nome)} disabled={!isAdmin}>🗑️</button>
                       </div>
                     </td>
                   </tr>

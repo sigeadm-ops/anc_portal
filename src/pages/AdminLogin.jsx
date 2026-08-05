@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 export default function AdminLogin() {
   const [user, setUser] = useState('')
   const [pwd, setPwd] = useState('')
+  const [showPwd, setShowPwd] = useState(false)
   const [loading, setLoading] = useState(false)
   const { login, init } = useAuthStore()
   const navigate = useNavigate()
@@ -55,13 +56,28 @@ export default function AdminLogin() {
 
           <div className="form-group" style={{ marginBottom: 16 }}>
             <label>Senha</label>
-            <input
-              type="password"
-              value={pwd}
-              onChange={e => setPwd(e.target.value)}
-              placeholder="Digite a senha"
-              autoComplete="current-password"
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPwd ? 'text' : 'password'}
+                value={pwd}
+                onChange={e => setPwd(e.target.value)}
+                placeholder="Digite a senha"
+                autoComplete="current-password"
+                style={{ paddingRight: 40 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwd(v => !v)}
+                title={showPwd ? 'Ocultar senha' : 'Mostrar senha'}
+                style={{
+                  position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 16, padding: 6, lineHeight: 1, opacity: 0.7,
+                }}
+              >
+                {showPwd ? '🙈' : '👁️'}
+              </button>
+            </div>
           </div>
 
           <button

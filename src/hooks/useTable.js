@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { db } from '../api/db'
-import toast from 'react-hot-toast'
 import { useUIStore } from '../store/uiStore'
 import { parseError } from '../lib/errorMessages'
 
@@ -8,7 +7,7 @@ import { parseError } from '../lib/errorMessages'
 // Hook genérico de CRUD via Supabase + React Query
 // ================================================================
 
-export function useTable(table, sheetName) {
+export function useTable(table) {
   const qc = useQueryClient()
   const showError = useUIStore.getState().showError
 
@@ -25,7 +24,7 @@ export function useTable(table, sheetName) {
 
   // ── Inserir ──────────────────────────────────────────────────
   const insert = useMutation({
-    mutationFn: (record) => db.insert(table, record, sheetName),
+    mutationFn: (record) => db.insert(table, record),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [table] })
     },
@@ -34,7 +33,7 @@ export function useTable(table, sheetName) {
 
   // ── Atualizar ────────────────────────────────────────────────
   const update = useMutation({
-    mutationFn: ({ id, data }) => db.update(table, id, data, sheetName),
+    mutationFn: ({ id, data }) => db.update(table, id, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [table] })
     },
@@ -43,7 +42,7 @@ export function useTable(table, sheetName) {
 
   // ── Deletar ──────────────────────────────────────────────────
   const remove = useMutation({
-    mutationFn: (id) => db.delete(table, id, sheetName),
+    mutationFn: (id) => db.delete(table, id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [table] })
     },

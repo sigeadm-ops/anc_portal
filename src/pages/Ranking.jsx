@@ -324,7 +324,7 @@ export default function Ranking() {
   const { type } = useParams()
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
 
-  const { isAdmin } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const canSeePoints = isAdmin
 
   const [ano, setAno]                 = useState(anoAtual())

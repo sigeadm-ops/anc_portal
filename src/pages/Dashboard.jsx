@@ -41,17 +41,6 @@ export default function Dashboard() {
 
   return (
     <div className="fade-in">
-      {/* Banner de auditoria */}
-      <div className="status-bar warn" style={{ marginBottom: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
-        <span style={{ fontSize: 24 }}>🔍</span>
-        <div>
-          <div style={{ fontWeight: 800 }}>Modo Auditoria Ativo</div>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>
-            O sistema está liberado para ajustes gerais. Após este período, funções sensíveis serão restritas ao administrador.
-          </div>
-        </div>
-      </div>
-
       {/* KPIs */}
       <div className="stats-grid">
         {stats.map(s => (

@@ -1,6 +1,15 @@
 import { supabase } from './supabase'
 import { SheetsAPI } from './sheetsApi'
 
+// Usado para preencher `created_by` nos métodos dedicados abaixo (Notas,
+// Desafios, Discípulos, Batismos, Biblioteca) — só na criação, nunca em
+// update, pra preservar o autor original do registro. Lido direto da
+// sessão do client (não passa por hook/prop porque db.js não é React).
+async function getCurrentUserId() {
+  const { data: { user } } = await supabase.auth.getUser()
+  return user?.id ?? null
+}
+
 // ================================================================
 // Mapeamento tabela → view para leituras (getAll)
 // Inserts/Updates continuam nas tabelas base com FKs
@@ -758,6 +767,102 @@ export const db = {
     return true
   },
 
+  // ── EXCLUSÃO EM CASCATA: Membro ────────────────────────────────
+  // Nunca exclui um membro sem antes varrer e remover tudo que foi
+  // lançado em nome dele (notas, cartões e registros de discipulado).
+  // Evita registros órfãos apontando pra um id_membros que não existe mais.
+  async getDependenciasMembro(id_membros) {
+    if (!id_membros) return { notas_teen: 0, notas_soul: 0, discipulos_cartoes: 0, discipulos_registros: 0 }
+
+    const contar = async (table, col) => {
+      const { count, error } = await supabase
+        .from(table)
+        .select('*', { count: 'exact', head: true })
+        .eq(col, id_membros)
+      if (error) return 0
+      return count || 0
+    }
+
+    const [notas_teen, notas_soul, discipulos_cartoes, discipulos_registros] = await Promise.all([
+      contar('Notas_Teen', 'id_membros'),
+      contar('Notas_Soul', 'id_membros'),
+      contar('discipulos_cartoes', 'membro_id'),
+      contar('discipulos_registros', 'membro_id'),
+    ])
+
+    return { notas_teen, notas_soul, discipulos_cartoes, discipulos_registros }
+  },
+
+  // Apaga, na ordem correta (de trás pra frente), tudo que está vinculado
+  // ao membro, e só então o registro do membro em si.
+  async excluirMembroCascata(id_membros) {
+    if (!id_membros) throw new Error('id_membros é obrigatório para exclusão em cascata.')
+
+    await supabase.from('Notas_Teen').delete().eq('id_membros', id_membros)
+    await supabase.from('Notas_Soul').delete().eq('id_membros', id_membros)
+    await supabase.from('discipulos_registros').delete().eq('membro_id', id_membros)
+    await supabase.from('discipulos_cartoes').delete().eq('membro_id', id_membros)
+
+    const { error } = await supabase.from('Membros').delete().eq('id_membros', id_membros)
+    if (error) throw error
+    return true
+  },
+
+  // ── EXCLUSÃO EM CASCATA: Base ───────────────────────────────────
+  // Mesma lógica do membro, só que em dois níveis: primeiro levanta os
+  // membros da base, depois tudo que está preso à base diretamente
+  // (desafios, batismos, biblioteca) e só então a base.
+  async getDependenciasBase(id_base) {
+    if (!id_base) return { membros: 0, notas_teen: 0, notas_soul: 0, desafios_registros: 0, desafios_marcos: 0, discipulos_cartoes: 0, discipulos_registros: 0, batismos_registros: 0, biblioteca_imagens: 0 }
+
+    const contar = async (table, col) => {
+      const { count, error } = await supabase
+        .from(table)
+        .select('*', { count: 'exact', head: true })
+        .eq(col, id_base)
+      if (error) return 0
+      return count || 0
+    }
+
+    const [
+      membros, notas_teen, notas_soul, desafios_registros, desafios_marcos,
+      discipulos_cartoes, discipulos_registros, batismos_registros, biblioteca_imagens,
+    ] = await Promise.all([
+      contar('Membros', 'id_base'),
+      contar('Notas_Teen', 'id_base'),
+      contar('Notas_Soul', 'id_base'),
+      contar('desafios_registros', 'base_id'),
+      contar('desafios_marcos', 'base_id'),
+      contar('discipulos_cartoes', 'base_id'),
+      contar('discipulos_registros', 'base_id'),
+      contar('batismos_registros', 'base_id'),
+      contar('biblioteca_imagens', 'base_id'),
+    ])
+
+    return { membros, notas_teen, notas_soul, desafios_registros, desafios_marcos, discipulos_cartoes, discipulos_registros, batismos_registros, biblioteca_imagens }
+  },
+
+  // Apaga, na ordem correta (de trás pra frente), tudo que está vinculado
+  // à base — notas e cartões dos membros primeiro, depois os registros
+  // presos direto na base, os próprios membros, e só então a base.
+  async excluirBaseCascata(id_base) {
+    if (!id_base) throw new Error('id_base é obrigatório para exclusão em cascata.')
+
+    await supabase.from('Notas_Teen').delete().eq('id_base', id_base)
+    await supabase.from('Notas_Soul').delete().eq('id_base', id_base)
+    await supabase.from('desafios_registros').delete().eq('base_id', id_base)
+    await supabase.from('desafios_marcos').delete().eq('base_id', id_base)
+    await supabase.from('discipulos_registros').delete().eq('base_id', id_base)
+    await supabase.from('discipulos_cartoes').delete().eq('base_id', id_base)
+    await supabase.from('batismos_registros').delete().eq('base_id', id_base)
+    await supabase.from('biblioteca_imagens').delete().eq('base_id', id_base)
+    await supabase.from('Membros').delete().eq('id_base', id_base)
+
+    const { error } = await supabase.from('Bases').delete().eq('id_base', id_base)
+    if (error) throw error
+    return true
+  },
+
   // ── NOTAS: atualiza uma linha, com retry para colunas ausentes ──
   async updateNota(tableName, id, fields) {
     let payload = Object.fromEntries(
@@ -823,7 +928,8 @@ export const db = {
 
   // ── NOTAS: insere todas as linhas de um formulário ──────────
   async insertNotasForm(rows, _ignored, tableName = 'Notas_Teen') {
-    let payload = rows
+    const created_by = await getCurrentUserId()
+    let payload = created_by ? rows.map(row => ({ ...row, created_by })) : rows
     // Em bases legadas, algumas colunas não existem (ex.: Versao/SalvoEm).
     // Faz retry removendo a coluna apontada no erro para não travar o lançamento.
     for (let attempt = 0; attempt < 30; attempt++) {
@@ -1105,10 +1211,11 @@ export const db = {
   },
 
   async upsertRegistro({ base_id, desafio_id, data_sabado, realizado, responsavel, obs }) {
+    const created_by = await getCurrentUserId()
     const { data, error } = await supabase
       .from('desafios_registros')
       .upsert(
-        { base_id, desafio_id, data_sabado, realizado, responsavel: responsavel ?? null, obs: obs ?? null },
+        { base_id, desafio_id, data_sabado, realizado, responsavel: responsavel ?? null, obs: obs ?? null, ...(created_by ? { created_by } : {}) },
         { onConflict: 'base_id,desafio_id,data_sabado' }
       )
       .select()
@@ -1164,9 +1271,10 @@ export const db = {
       return data
     }
 
+    const created_by = await getCurrentUserId()
     const { data, error } = await supabase
       .from('desafios_marcos')
-      .insert(payload)
+      .insert(created_by ? { ...payload, created_by } : payload)
       .select()
       .single()
     if (error) throw error
@@ -1607,9 +1715,10 @@ export const db = {
       if (error) throw error
       return data
     }
+    const created_by = await getCurrentUserId()
     const { data, error } = await supabase
       .from('discipulos_registros')
-      .insert(payload)
+      .insert(created_by ? { ...payload, created_by } : payload)
       .select()
       .single()
     if (error) throw error
@@ -1681,9 +1790,10 @@ export const db = {
       if (error) throw error
       return data
     }
+    const created_by = await getCurrentUserId()
     const { data, error } = await supabase
       .from('batismos_registros')
-      .insert(payload)
+      .insert(created_by ? { ...payload, created_by } : payload)
       .select()
       .single()
     if (error) throw error
@@ -1776,9 +1886,10 @@ export const db = {
       if (error) throw error
       return data
     }
+    const created_by = await getCurrentUserId()
     const { data, error } = await supabase
       .from('biblioteca_imagens')
-      .insert(payload)
+      .insert(created_by ? { ...payload, created_by } : payload)
       .select()
       .single()
     if (error) throw error

@@ -744,9 +744,263 @@ tbody td input:focus, tbody td select:focus {
 }
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes modalScale { 
-  from { opacity: 0; transform: scale(0.9) translateY(20px); } 
-  to { opacity: 1; transform: scale(1) translateY(0); } 
+@keyframes modalScale {
+  from { opacity: 0; transform: scale(0.9) translateY(20px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ── DANGER CASCADE DELETE MODAL (exclusão de Base/Membro com dados vinculados) ── */
+.danger-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20,0,4,.82);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+  animation: fadeIn .25s ease;
+}
+
+.danger-modal {
+  width: 100%;
+  max-width: 560px;
+  background: linear-gradient(180deg, #241018 0%, #1a0d12 100%);
+  border: 2px solid var(--bad);
+  border-radius: 24px;
+  box-shadow: 0 0 0 6px rgba(255,77,109,.10), 0 30px 70px rgba(0,0,0,.6);
+  overflow: hidden;
+  animation: modalScale .3s cubic-bezier(0.34, 1.56, 0.64, 1), dangerGlow 2.2s ease-in-out infinite;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes dangerGlow {
+  0%, 100% { box-shadow: 0 0 0 6px rgba(255,77,109,.10), 0 30px 70px rgba(0,0,0,.6); }
+  50%      { box-shadow: 0 0 0 10px rgba(255,77,109,.22), 0 30px 70px rgba(0,0,0,.6); }
+}
+
+@keyframes dangerShake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+.danger-modal.shake { animation: dangerShake .5s cubic-bezier(.36,.07,.19,.97) both; }
+
+.danger-modal-header {
+  padding: 26px 28px 16px;
+  text-align: center;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, rgba(255,77,109,.14), transparent);
+}
+
+.danger-icon-container {
+  width: 72px;
+  height: 72px;
+  background: rgba(255,77,109,.14);
+  border: 2px solid rgba(255,77,109,.5);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+  font-size: 34px;
+  animation: dangerPulseIcon 1.6s ease-in-out infinite;
+}
+
+@keyframes dangerPulseIcon {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,77,109,.45); }
+  50%      { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(255,77,109,0); }
+}
+
+.danger-modal-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -.2px;
+  margin-bottom: 6px;
+}
+
+.danger-modal-subtitle {
+  font-size: 13.5px;
+  color: rgba(255,255,255,.65);
+  line-height: 1.5;
+}
+
+.danger-modal-body {
+  padding: 4px 28px 8px;
+  overflow-y: auto;
+}
+
+.danger-modal-name {
+  text-align: center;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--bad);
+  margin: 4px 0 16px;
+  word-break: break-word;
+}
+
+.danger-dep-list {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.danger-dep-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255,77,109,.08);
+  border: 1px solid rgba(255,77,109,.25);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  color: rgba(255,255,255,.9);
+}
+
+.danger-dep-item strong {
+  color: var(--bad);
+  font-weight: 800;
+  font-size: 15px;
+}
+
+.danger-modal-warning {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--bad);
+  background: rgba(255,77,109,.10);
+  border: 1px dashed rgba(255,77,109,.4);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.danger-modal-confirm-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: rgba(255,255,255,.75);
+  margin: 14px 0 8px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.danger-modal-confirm-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 2px solid rgba(255,77,109,.4);
+  background: rgba(0,0,0,.25);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  transition: border-color .2s, box-shadow .2s;
+}
+.danger-modal-confirm-input:focus {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 3px rgba(255,77,109,.2);
+}
+.danger-modal-confirm-input.match {
+  border-color: var(--good);
+  box-shadow: 0 0 0 3px rgba(56,242,163,.18);
+}
+
+.danger-modal-footer {
+  padding: 18px 28px 26px;
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.danger-btn-cancel {
+  flex: 1;
+  background: rgba(255,255,255,.06);
+  color: rgba(255,255,255,.85);
+  border: 1px solid rgba(255,255,255,.14);
+  padding: 13px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .2s;
+}
+.danger-btn-cancel:hover { background: rgba(255,255,255,.1); }
+
+.danger-btn-confirm {
+  flex: 1.4;
+  background: var(--bad);
+  color: #fff;
+  border: none;
+  padding: 13px;
+  border-radius: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all .2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.danger-btn-confirm:hover:not(:disabled) {
+  background: #ff2d52;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(255,77,109,.4);
+}
+.danger-btn-confirm:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+/* O modal de exclusão é neutro de tema (sempre vermelho/branco) — nunca
+   deve herdar o override "#281400 !important" que o tema Soul+ aplica a
+   span/strong/li/p (ver regra "evita claro no claro" abaixo, na seção de
+   tipografia Soul+). Reforça com seletor mais específico pra sempre vencer,
+   dentro ou fora do tema Soul+. */
+.danger-modal-backdrop,
+.danger-modal-backdrop p,
+.danger-modal-backdrop span,
+.danger-modal-backdrop strong,
+.danger-modal-backdrop li,
+.main-content.theme-soul .danger-modal-backdrop,
+.main-content.theme-soul .danger-modal-backdrop p,
+.main-content.theme-soul .danger-modal-backdrop span,
+.main-content.theme-soul .danger-modal-backdrop strong,
+.main-content.theme-soul .danger-modal-backdrop li {
+  color: #fff !important;
+}
+
+.danger-modal-name,
+.danger-modal-warning {
+  color: var(--bad) !important;
+}
+
+.danger-dep-item strong {
+  color: #fff !important;
+}
+
+/* Reforço por ID: o input de "digite o nome" precisa vencer a regra
+   genérica `.main-content.theme-soul input:not(...)` (fundo claro/texto
+   marrom do tema Soul+), que tem especificidade maior que qualquer
+   seletor de classe repetido. ID sempre vence. */
+#danger-confirm-input,
+#danger-confirm-input:focus {
+  color: #fff !important;
+  background-color: rgba(0,0,0,.25) !important;
+  border-color: rgba(255,77,109,.4) !important;
+}
+#danger-confirm-input.match {
+  border-color: var(--good) !important;
+  background-color: rgba(0,0,0,.25) !important;
 }
 
 /* ── STATS ───────────────────────────────────────────────────────── */

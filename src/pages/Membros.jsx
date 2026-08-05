@@ -1,8 +1,18 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
+import { db } from '../api/db'
+import ConfirmCascadeDeleteModal from '../components/ConfirmCascadeDeleteModal'
 import { today, fmtDate, toInputDate, buildBaseLabel, findDuplicateBaseGroups, formatBaseId, namesLikelySamePerson } from '../utils/helpers'
+
+const LABELS_DEPENDENCIA_MEMBRO = {
+  notas_teen: 'nota(s) G148 Teen',
+  notas_soul: 'nota(s) Soul+',
+  discipulos_cartoes: 'cartão(ões) de discipulado',
+  discipulos_registros: 'registro(s) de discipulado',
+}
 
 const EMPTY_HEADER = {
   // UI — controle de cascata e tema
@@ -25,7 +35,8 @@ export default function Membros() {
   const { type } = useParams()
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
 
-  const { data, isLoading, insert, update, remove } = useTable('Membros', 'MEMBROS')
+  const { data, isLoading, insert, update } = useTable('Membros', 'MEMBROS')
+  const qc = useQueryClient()
   const { data: bases } = useTable('Bases')
 
   const [header, setHeader] = useState({ ...EMPTY_HEADER, Tipo: currentTipo })
@@ -33,6 +44,7 @@ export default function Membros() {
   const [search, setSearch] = useState('')
   const [editingMembro, setEditingMembro] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState(null) // { id, nome, deps } | null
 
   // Atualiza o tipo no cabeçalho se o parâmetro da URL mudar
   useEffect(() => {
@@ -137,12 +149,28 @@ export default function Membros() {
   }
 
   async function handleDelete(id, nome) {
-    if (!confirm(`Excluir membro "${nome}"?`)) return
+    let deps
     try {
-      await remove.mutateAsync(id)
-      toast.success('Membro excluído.')
+      deps = await db.getDependenciasMembro(id)
     } catch {
-      // erro tratado pelo onError do useTable (modal global)
+      toast.error('Não foi possível verificar os dados vinculados a este membro. Exclusão cancelada por segurança.')
+      return
+    }
+    setPendingDelete({ id, nome, deps })
+  }
+
+  async function confirmarExclusaoMembro() {
+    const { id, nome, deps } = pendingDelete
+    const hasDeps = Object.values(deps).some(qtd => qtd > 0)
+    try {
+      await db.excluirMembroCascata(id)
+      qc.invalidateQueries({ queryKey: ['Membros'] })
+      qc.invalidateQueries({ queryKey: ['Notas_Teen'] })
+      qc.invalidateQueries({ queryKey: ['Notas_Soul'] })
+      toast.success(hasDeps ? 'Membro e todos os dados vinculados foram excluídos.' : 'Membro excluído.')
+      setPendingDelete(null)
+    } catch (err) {
+      toast.error(`Erro ao excluir: ${err.message}`)
     }
   }
 
@@ -447,6 +475,15 @@ export default function Membros() {
         </div>
       )}
 
+      <ConfirmCascadeDeleteModal
+        open={Boolean(pendingDelete)}
+        tipoLabel="membro"
+        nome={pendingDelete?.nome}
+        dependencias={pendingDelete?.deps || {}}
+        labels={LABELS_DEPENDENCIA_MEMBRO}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmarExclusaoMembro}
+      />
     </div>
   )
 }

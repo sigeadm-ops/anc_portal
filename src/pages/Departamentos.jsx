@@ -6,8 +6,8 @@ import { useAuthStore } from '../store/authStore'
 
 export default function Departamentos() {
   const qc = useQueryClient()
-  const { isAuditMode, isAdmin } = useAuthStore()
-  const canEdit = isAuditMode || isAdmin
+  const isAdmin = useAuthStore(s => s.isAdmin)
+  const canEdit = isAdmin
 
   const [form, setForm] = useState({ nome: '', ativo: true })
   const [editingId, setEditingId] = useState(null)

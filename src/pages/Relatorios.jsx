@@ -103,7 +103,7 @@ function escapeHtml(v) {
 
 export default function Relatorios() {
   const qc = useQueryClient()
-  const { isAdmin } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const [tab, setTab] = useState('geral') // 'geral', 'teen', 'soul'
   
   // Dados principais

@@ -30,7 +30,7 @@ const TABS = [
 
 export default function AdminConfig() {
   const { min } = useParams()
-  const { isAdmin, isAuditMode, changePassword, logout } = useAuthStore()
+  const { changePassword, logout } = useAuthStore()
   const [activeTab, setActiveTab] = useState('provas') // Inicia em Provas que é o mais comum
   const [pwd, setPwd] = useState({ cur: '', novo: '', conf: '' })
 
@@ -87,9 +87,6 @@ export default function AdminConfig() {
       <div className="card section" style={{ marginBottom: 20 }}>
         <div className="card-header">
           <div className="card-title">⚙️ Painel de Administração Mestre</div>
-          {!isAdmin && !isAuditMode && (
-            <div className="chip chip-warn">Ative o cadeado 🔓 no topo para editar</div>
-          )}
         </div>
         
         {/* Abas Estilizadas */}
@@ -147,12 +144,12 @@ export default function AdminConfig() {
 // ── COMPONENTE: Gerenciamento de Provas ──────────────────────
 function ProvasCRUD({ filterMin }) {
   const showError = useUIStore(s => s.showError)
-  const { isAdmin, isAuditMode } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const { data, isLoading, insert, update, remove } = useTable('Provas')
   const [form, setForm] = useState({ tipo: filterMin || '', nome: '', data: '' })
   const [editingId, setEditingId] = useState(null)
 
-  const canCrud = isAdmin || isAuditMode
+  const canCrud = isAdmin
 
   useEffect(() => {
     setForm({ tipo: filterMin || '', nome: '', data: '' })
@@ -234,7 +231,6 @@ function ProvasCRUD({ filterMin }) {
 // ── COMPONENTE: Configuração de Trimestres ───────────────────
 function TrimestresConfig() {
   const showError = useUIStore(s => s.showError)
-  const { isAuditMode } = useAuthStore()
   const qc = useQueryClient()
   const anoAtual = new Date().getFullYear()
   const [ano, setAno] = useState(anoAtual)
@@ -826,7 +822,7 @@ function DesafiosCatalogoConfig({ filterMin }) {
 // ── COMPONENTE: Discípulos Teen — pontos por cartão e por batismo ──
 function DiscipulosConfig() {
   const showError = useUIStore(s => s.showError)
-  const { isAuditMode } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const qc = useQueryClient()
 
   const { data: discipulosCfg, isLoading: loadingDisc } = useQuery({
@@ -895,14 +891,14 @@ function DiscipulosConfig() {
                 step="0.01"
                 value={pontosCartao}
                 onChange={e => setPontosCartao(e.target.value)}
-                disabled={!isAuditMode}
+                disabled={!isAdmin}
               />
             </div>
             <button
               className="btn btn-primary"
               style={{ marginTop: 20 }}
               onClick={() => upsertDiscipulos.mutate({ pontos_por_cartao: Number(pontosCartao) })}
-              disabled={!isAuditMode || upsertDiscipulos.isPending}
+              disabled={!isAdmin || upsertDiscipulos.isPending}
             >
               {upsertDiscipulos.isPending ? <span className="spinner" /> : '💾 Salvar'}
             </button>
@@ -934,14 +930,14 @@ function DiscipulosConfig() {
                 step="0.01"
                 value={pontosBatismo}
                 onChange={e => setPontosBatismo(e.target.value)}
-                disabled={!isAuditMode}
+                disabled={!isAdmin}
               />
             </div>
             <button
               className="btn btn-primary"
               style={{ marginTop: 20 }}
               onClick={() => upsertBatismos.mutate({ pontos_por_batismo: Number(pontosBatismo) })}
-              disabled={!isAuditMode || upsertBatismos.isPending}
+              disabled={!isAdmin || upsertBatismos.isPending}
             >
               {upsertBatismos.isPending ? <span className="spinner" /> : '💾 Salvar'}
             </button>
@@ -955,7 +951,7 @@ function DiscipulosConfig() {
 // ── COMPONENTE: Gerenciamento de Dimensões ───────────────────
 function DimensionCRUD({ table, pk, field, label, parentField, parentPkField, parentTable, parentLabel }) {
   const showError = useUIStore(s => s.showError)
-  const { isAuditMode } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const { data, isLoading, insert, update, remove } = useTable(table)
   const { data: parents } = useTable(parentTable || 'Bases') 
   const [form, setForm] = useState({ [field]: '', [parentField]: '' })
@@ -996,7 +992,7 @@ function DimensionCRUD({ table, pk, field, label, parentField, parentPkField, pa
               <div className="form-group"><label>Nome do/a {label} *</label><input value={form[field]} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} placeholder={`Ex: ${label} Central`} /></div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
-              <button type="submit" className="btn btn-primary" disabled={!isAuditMode}>{editingId ? 'Atualizar' : 'Salvar'}</button>
+              <button type="submit" className="btn btn-primary" disabled={!isAdmin}>{editingId ? 'Atualizar' : 'Salvar'}</button>
             </div>
           </form>
         </div>
@@ -1015,8 +1011,8 @@ function DimensionCRUD({ table, pk, field, label, parentField, parentPkField, pa
                   <td><strong>{item[field]}</strong></td>
                   <td>
                     <div className="td-actions">
-                      <button className="btn-icon" onClick={() => { setForm({[field]: item[field], [parentField]: item[parentField]}); setEditingId(item[pk]) }} disabled={!isAuditMode}>✏️</button>
-                      <button className="btn-icon danger" onClick={() => isAuditMode && confirm('Excluir?') && remove.mutateAsync(item[pk])} disabled={!isAuditMode}>🗑️</button>
+                      <button className="btn-icon" onClick={() => { setForm({[field]: item[field], [parentField]: item[parentField]}); setEditingId(item[pk]) }} disabled={!isAdmin}>✏️</button>
+                      <button className="btn-icon danger" onClick={() => isAdmin && confirm('Excluir?') && remove.mutateAsync(item[pk])} disabled={!isAdmin}>🗑️</button>
                     </div>
                   </td>
                 </tr>

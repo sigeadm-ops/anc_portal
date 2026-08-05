@@ -88,7 +88,7 @@ export default function Desafios() {
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const { isAdmin, isAuditMode } = useAuthStore()
+  const isAdmin = useAuthStore(s => s.isAdmin)
   const { data: bases = [] }    = useTable('Bases')
   const { data: regioes = [] }  = useTable('Regiao')
   const { data: distritos = [] } = useTable('Distritos')
@@ -202,7 +202,7 @@ export default function Desafios() {
 
   // ── Trava de trimestre encerrado ─────────────────────────────
   const isPastTrimestre = Boolean(cfgTrim && cfgTrim.ultimo_sabado < hojeStr)
-  const isLocked = TRIMESTRE_LOCK_ATIVO && isPastTrimestre && !isAuditMode && !isAdmin
+  const isLocked = TRIMESTRE_LOCK_ATIVO && isPastTrimestre && !isAdmin
 
   // ── Dados da base ────────────────────────────────────────────
   const { data: registros = [] } = useQuery({
@@ -555,12 +555,12 @@ export default function Desafios() {
 
       {/* ── Tab: Discípulos ── */}
       {mainTab === 'discipulos' && (
-        <DiscipulosTab baseId={baseId} ano={ano} tipo={currentTipo} isAdmin={isAdmin} isAuditMode={isAuditMode} qc={qc} isSoul={type === 'soul'} />
+        <DiscipulosTab baseId={baseId} ano={ano} tipo={currentTipo} isAdmin={isAdmin} qc={qc} isSoul={type === 'soul'} />
       )}
 
       {/* ── Tab: Batismos ── */}
       {mainTab === 'batismos' && (
-        <BatismosTab baseId={baseId} ano={ano} tipo={currentTipo} isAdmin={isAdmin} isAuditMode={isAuditMode} isSoul={type === 'soul'} />
+        <BatismosTab baseId={baseId} ano={ano} tipo={currentTipo} isAdmin={isAdmin} isSoul={type === 'soul'} />
       )}
 
       {/* ── Tab: Comparativo ── */}
@@ -578,7 +578,7 @@ export default function Desafios() {
 
       {/* ── Tab: Fotos ── */}
       {mainTab === 'fotos' && (
-        <FotosTab baseId={baseId} isAdmin={isAdmin} isAuditMode={isAuditMode} />
+        <FotosTab baseId={baseId} isAdmin={isAdmin} />
       )}
 
       {/* ── Tab: Desafios ── */}
@@ -767,7 +767,7 @@ export default function Desafios() {
                               desafio={d}
                               marcos={marcos}
                               ano={ano}
-                              canEdit={isAdmin || isAuditMode}
+                              canEdit={isAdmin}
                               onToggle={(mes, isDone) => toggleMarcoMensal.mutate({
                                 base_id: baseId, desafio_id: d.id,
                                 ano, trimestre: Math.ceil(mes / 3), mes,
@@ -1149,7 +1149,7 @@ function StatCard({ label, valor, max, cor, destaque, isSoul }) {
 }
 
 // ── DISCÍPULOS TAB ───────────────────────────────────────────────
-function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) {
+function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
   const { data: allMembros = [] } = useTable('Membros')
   const membros = useMemo(() =>
     allMembros.filter(m => {
@@ -1673,7 +1673,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, isAuditMode, qc, isSoul }) 
 }
 
 // ── BATISMOS TAB ──────────────────────────────────────────────────
-function BatismosTab({ baseId, ano, tipo, isAdmin, isAuditMode, isSoul }) {
+function BatismosTab({ baseId, ano, tipo, isAdmin, isSoul }) {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [editItem, setEditItem] = useState(null)
@@ -1852,7 +1852,7 @@ function BatismosTab({ baseId, ano, tipo, isAdmin, isAuditMode, isSoul }) {
 }
 
 // ── BIBLIOTECA TAB ────────────────────────────────────────────────
-function FotosTab({ baseId, isAdmin, isAuditMode }) {
+function FotosTab({ baseId, isAdmin }) {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [editItem, setEditItem] = useState(null)

@@ -1,10 +1,25 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { useIgrejas } from '../hooks/useIgrejas'
 import { useAuthStore } from '../store/authStore'
+import { db } from '../api/db'
+import ConfirmCascadeDeleteModal from '../components/ConfirmCascadeDeleteModal'
 import { today, buildBaseLabel, findDuplicateBaseGroups, normalizeBaseName } from '../utils/helpers'
+
+const LABELS_DEPENDENCIA_BASE = {
+  membros: 'membro(s)',
+  notas_teen: 'nota(s) G148 Teen',
+  notas_soul: 'nota(s) Soul+',
+  desafios_registros: 'registro(s) de desafios semanais',
+  desafios_marcos: 'marco(s) de desafios',
+  discipulos_cartoes: 'cartão(ões) de discipulado',
+  discipulos_registros: 'registro(s) de discipulado',
+  batismos_registros: 'registro(s) de batismo',
+  biblioteca_imagens: 'imagem(ns) na biblioteca',
+}
 
 const EMPTY = {
   Tipo: '', Base: '',
@@ -18,16 +33,18 @@ const EMPTY = {
 export default function Bases() {
   const { type } = useParams()
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
-  const { isAdmin, isAuditMode } = useAuthStore()
-  const canViewSensitiveContacts = isAdmin || isAuditMode
+  const isAdmin = useAuthStore(s => s.isAdmin)
+  const canViewSensitiveContacts = isAdmin
   
-  const { data, isLoading, insert, update, remove } = useTable('Bases', 'BASES')
+  const { data, isLoading, insert, update } = useTable('Bases', 'BASES')
   const geo = useIgrejas()
+  const qc = useQueryClient()
 
   const [form, setForm] = useState({ ...EMPTY, Tipo: currentTipo })
   const [editingId, setEditingId] = useState(null)
   const [originalStatus, setOriginalStatus] = useState('Ativo')
   const [search, setSearch] = useState('')
+  const [pendingDelete, setPendingDelete] = useState(null) // { id, nome, deps } | null
 
   // Atualiza o tipo no formulário se o parâmetro da URL mudar
   useEffect(() => {
@@ -126,13 +143,30 @@ export default function Bases() {
   }
 
   async function handleDelete(id, nome) {
-    if (!confirm(`Excluir base "${nome}"?`)) return
+    let deps
     try {
-      await remove.mutateAsync(id)
-      toast.success('Base excluída.')
-      if (editingId === id) cancelEdit()
+      deps = await db.getDependenciasBase(id)
     } catch {
-      // erro tratado pelo onError do useTable (modal global)
+      toast.error('Não foi possível verificar os dados vinculados a esta base. Exclusão cancelada por segurança.')
+      return
+    }
+    setPendingDelete({ id, nome, deps })
+  }
+
+  async function confirmarExclusaoBase() {
+    const { id, nome, deps } = pendingDelete
+    const hasDeps = Object.values(deps).some(qtd => qtd > 0)
+    try {
+      await db.excluirBaseCascata(id)
+      qc.invalidateQueries({ queryKey: ['Bases'] })
+      qc.invalidateQueries({ queryKey: ['Membros'] })
+      qc.invalidateQueries({ queryKey: ['Notas_Teen'] })
+      qc.invalidateQueries({ queryKey: ['Notas_Soul'] })
+      toast.success(hasDeps ? 'Base e todos os dados vinculados foram excluídos.' : 'Base excluída.')
+      if (editingId === id) cancelEdit()
+      setPendingDelete(null)
+    } catch (err) {
+      toast.error(`Erro ao excluir: ${err.message}`)
     }
   }
 
@@ -425,6 +459,16 @@ export default function Bases() {
           </div>
         )}
       </div>
+
+      <ConfirmCascadeDeleteModal
+        open={Boolean(pendingDelete)}
+        tipoLabel="base"
+        nome={pendingDelete?.nome}
+        dependencias={pendingDelete?.deps || {}}
+        labels={LABELS_DEPENDENCIA_BASE}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={confirmarExclusaoBase}
+      />
     </div>
   )
 }
