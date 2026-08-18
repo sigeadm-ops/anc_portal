@@ -446,7 +446,6 @@ export default function Desafios() {
 
   const totalGeralAno = totalPontuaisAno + totalMensaisAno + totalSemanaisAno + totalAnuais
   const maxGeralAno   = maxPontuaisAno + maxMensaisAno + maxSemanaisAno + maxAnuais
-
   function pct(val, max) {
     return max > 0 ? Math.min(100, Math.round((val / max) * 100)) : 0
   }
@@ -1174,6 +1173,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
   const [expanded, setExpanded] = useState({})
   const [metaCartao, setMetaCartao] = useState({})
   const [fotoFiles, setFotoFiles] = useState({}) // { [cardId]: File | null }
+  const [fotoRemoved, setFotoRemoved] = useState({}) // { [cardId]: true } marca foto para remoção ao salvar
   // Rascunhos locais (não salvos no DB): { [membroId]: [{_draftId, nome, departamento, data_inicio, data_fim, observacoes_professor}] }
   const [draftCartoes, setDraftCartoes] = useState({})
 
@@ -1274,15 +1274,23 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
     onError: (e) => toast.error('Erro ao salvar cartão: ' + e.message),
   })
 
-  // Atualiza cartão já existente no DB (inclui upload de foto)
+  // Atualiza cartão já existente no DB (inclui upload ou remoção de foto)
   const saveMetaCartao = useMutation({
     mutationFn: async (payload) => {
-      let foto_url = payload.foto_url
+      let foto_url = payload.foto_url ?? null
+      const removePhoto = fotoRemoved[payload.id]
       const file = fotoFiles[payload.id]
-      if (file) {
-        const path = `discipulos/${baseId}/${payload.id}_${Date.now()}_${file.name.replace(/\s+/g, '_')}`
-        foto_url = await db.uploadArquivo('anc-media', path, file)
-        setFotoFiles(prev => { const n = { ...prev }; delete n[payload.id]; return n })
+      if (removePhoto) {
+        foto_url = null
+        setFotoRemoved(prev => { const n = { ...prev }; delete n[payload.id]; return n })
+      } else if (file) {
+        try {
+          const path = `discipulos/${baseId}/${payload.id}_${Date.now()}_${file.name.replace(/\s+/g, '_')}`
+          foto_url = await db.uploadArquivo('anc-media', path, file)
+          setFotoFiles(prev => { const n = { ...prev }; delete n[payload.id]; return n })
+        } catch (uploadErr) {
+          throw new Error('Erro ao enviar a foto: ' + uploadErr.message)
+        }
       }
       return db.updateDiscipulosCartao({ ...payload, foto_url })
     },
@@ -1428,13 +1436,17 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
                           </div>
                           <div>
                             <label style={LABEL_STYLE}>Departamento / ministério *</label>
-                            <input
+                            {/* BUG 1 FIX: select em vez de input+datalist (datalist dentro de grid CSS causa bug) */}
+                            <select
                               value={cardMeta.departamento}
                               onChange={(e) => setMetaCartao(m => ({ ...m, [card.id]: { ...cardMeta, departamento: e.target.value } }))}
-                              list={`deps-${card.id}`}
-                              placeholder="Ex.: Música, Mídia, Infantil…"
-                              style={{ borderColor: !cardMeta.departamento?.trim() ? 'var(--warn)' : undefined }}
-                            />
+                              style={{ width: '100%', borderColor: !cardMeta.departamento?.trim() ? 'var(--warn)' : undefined }}
+                            >
+                              <option value="">Selecione…</option>
+                              {DEPARTAMENTOS_SUGERIDOS.map(dep => (
+                                <option key={dep} value={dep}>{dep}</option>
+                              ))}
+                            </select>
                           </div>
                           <div>
                             <label style={LABEL_STYLE}>Data de início *</label>
@@ -1468,7 +1480,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
                                 data_inicio: cardMeta.data_inicio,
                                 data_fim: cardMeta.data_fim,
                                 observacoes_professor: cardMeta.observacoes_professor,
-                                foto_url: card.foto_url ?? undefined,
+                                foto_url: card.foto_url ?? null, // BUG 2 FIX: null em vez de undefined
                               })
                             }}
                             disabled={saveMetaCartao.isPending}
@@ -1487,9 +1499,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
                           >
                             {deleteCartao.isPending ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🗑️'}
                           </button>
-                          <datalist id={`deps-${card.id}`}>
-                            {DEPARTAMENTOS_SUGERIDOS.map(dep => <option key={dep} value={dep} />)}
-                          </datalist>
+                          {/* datalist REMOVIDO — estava dentro do grid causando bug */}
                         </div>
 
                         {/* Linha 2 — descrição */}
@@ -1520,21 +1530,41 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
                           <div style={{ marginTop: 8 }}>
                             <label style={LABEL_STYLE}>Foto / comprovante do cartão (JPG, PNG, PDF…)</label>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                              <input
-                                type="file"
-                                accept="image/*,application/pdf"
-                                style={{ fontSize: 12 }}
-                                onChange={e => setFotoFiles(prev => ({ ...prev, [card.id]: e.target.files?.[0] || null }))}
-                              />
-                              {card.foto_url && (
-                                <a
-                                  href={card.foto_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{ fontSize: 12, color: 'var(--c1)' }}
-                                >
-                                  📎 Ver comprovante atual
-                                </a>
+                              {card.foto_url && !fotoRemoved[card.id] ? (
+                                <>
+                                  <a href={card.foto_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--c1)' }}>
+                                    📎 Ver comprovante atual
+                                  </a>
+                                  <button
+                                    type="button"
+                                    style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid #f55', background: 'transparent', color: '#f55', cursor: 'pointer' }}
+                                    onClick={() => {
+                                      setFotoRemoved(prev => ({ ...prev, [card.id]: true }))
+                                      setFotoFiles(prev => { const n = { ...prev }; delete n[card.id]; return n })
+                                    }}
+                                  >
+                                    🗑️ Remover foto
+                                  </button>
+                                </>
+                              ) : fotoRemoved[card.id] ? (
+                                <span style={{ fontSize: 11, color: 'var(--warn)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  ⚠️ Foto será removida ao salvar
+                                  <button
+                                    type="button"
+                                    style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(255,255,255,.3)', background: 'transparent', cursor: 'pointer' }}
+                                    onClick={() => setFotoRemoved(prev => ({ ...prev, [card.id]: false }))}
+                                  >
+                                    Desfazer
+                                  </button>
+                                </span>
+                              ) : null}
+                              {!fotoRemoved[card.id] && (
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  style={{ fontSize: 12 }}
+                                  onChange={e => setFotoFiles(prev => ({ ...prev, [card.id]: e.target.files?.[0] || null }))}
+                                />
                               )}
                               {fotoFiles[card.id] && (
                                 <span style={{ fontSize: 11, opacity: 0.65 }}>
@@ -1584,13 +1614,17 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
                           </div>
                           <div>
                             <label style={LABEL_STYLE}>Departamento / ministério *</label>
-                            <input
+                            {/* BUG 1 FIX: select em vez de input+datalist */}
+                            <select
                               value={draft.departamento}
                               onChange={e => updateDraft(membroId, draft._draftId, 'departamento', e.target.value)}
-                              list={`deps-draft-${draft._draftId}`}
-                              placeholder="Ex.: Música, Mídia, Infantil…"
-                              style={{ borderColor: !draft.departamento?.trim() ? 'var(--warn)' : undefined }}
-                            />
+                              style={{ width: '100%', borderColor: !draft.departamento?.trim() ? 'var(--warn)' : undefined }}
+                            >
+                              <option value="">Selecione…</option>
+                              {DEPARTAMENTOS_SUGERIDOS.map(dep => (
+                                <option key={dep} value={dep}>{dep}</option>
+                              ))}
+                            </select>
                           </div>
                           <div>
                             <label style={LABEL_STYLE}>Data de início *</label>
@@ -1636,10 +1670,9 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
                           >
                             🗑️
                           </button>
-                          <datalist id={`deps-draft-${draft._draftId}`}>
-                            {DEPARTAMENTOS_SUGERIDOS.map(dep => <option key={dep} value={dep} />)}
-                          </datalist>
+                          {/* datalist REMOVIDO — estava dentro do grid causando bug */}
                         </div>
+
                         <div style={{ marginTop: 8 }}>
                           <label style={LABEL_STYLE}>Descrição / foco do discipulado</label>
                           <input
@@ -1649,6 +1682,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
                             style={{ width: '100%' }}
                           />
                         </div>
+
                         <div style={{ marginTop: 8 }}>
                           <label style={LABEL_STYLE}>Observações do professor</label>
                           <textarea
@@ -1705,6 +1739,7 @@ function BatismosTab({ baseId, ano, tipo, isAdmin, isSoul }) {
         const path = `batismos/${baseId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`
         foto_url = await db.uploadArquivo('anc-media', path, file)
       }
+      if (!url) throw new Error('Selecione uma imagem.')
       return db.upsertBatismo({ id, base_id: baseId, nome, mes: mes || null, ano, foto_url, obs })
     },
     onSuccess: () => {
@@ -1736,6 +1771,7 @@ function BatismosTab({ baseId, ano, tipo, isAdmin, isSoul }) {
   async function handleSubmit(e) {
     e.preventDefault()
     if (!form.nome) { toast.error('Informe o nome do batizado.'); return }
+    if (!fileInput && !editItem?.url) { toast.error('Selecione uma imagem.'); return }
     setUploading(true)
     try {
       await upsert.mutateAsync({ id: editItem?.id, ...form, file: fileInput })
@@ -2129,7 +2165,7 @@ function ComparativoTab({ baseId, baseNome, tipo, cfgTrim, sabados, catalogo, re
   const statusBySabado = useMemo(() => {
     const entries = sabados.map((sab) => {
       const notasDia = notasByDate[sab] ?? []
-      const temNotas = notasDia.length > 0
+      const temNotas = Boolean(statusBySabado[sab])
       const comunhaoAuto = temNotas && notasDia.some(notaTemComunhaoSim)
       const assidAuto = temNotas
       // Comunhão manual é semanal e independe de notas — verifica registro direto.
