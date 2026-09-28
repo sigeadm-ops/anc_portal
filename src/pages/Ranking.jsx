@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
@@ -136,7 +136,9 @@ function Podium({ top3, showPoints, labelPts = 'pts' }) {
 }
 
 // Novo layout em 4 colunas por tier (para view de bases)
-function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = false }) {
+function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = false, onSelect }) {
+  const [tierFilter, setTierFilter] = useState('Todas')
+
   // Agrupa os itens por tier
   const itemsByTier = useMemo(() => {
     const grouped = {}
@@ -147,15 +149,25 @@ function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = fal
     })
     // Ordena alfabeticamente dentro de cada tier
     Object.keys(grouped).forEach(tierName => {
-      grouped[tierName].sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? ''))
+      grouped[tierName].sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR', { sensitivity: 'base' }))
     })
     return grouped
   }, [items])
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, paddingTop: 12 }}>
+    <>
+      <div className="tier-filter" role="group" aria-label="Filtrar bases por faixa">
+        <button type="button" className={tierFilter === 'Todas' ? 'active' : ''} onClick={() => setTierFilter('Todas')}>Todas</button>
+        {TIERS_ORDER.map(tier => (
+          <button key={tier.nome} type="button" className={tierFilter === tier.nome ? 'active' : ''} onClick={() => setTierFilter(tier.nome)}>
+            {tier.icon} {tier.nome}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, paddingTop: 12 }}>
       {TIERS_ORDER.map(tier => {
         const basesNoTier = itemsByTier[tier.nome] ?? []
+        if (tierFilter !== 'Todas' && tierFilter !== tier.nome) return null
         if (basesNoTier.length === 0) return null
         const isParticipando = tier.nome === 'Participando'
 
@@ -190,11 +202,12 @@ function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = fal
             {/* Lista de bases */}
             <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
               {basesNoTier.map((item, idx) => (
-                <div key={item.id ?? item.nome ?? idx} style={{
+                <button key={item.id ?? item.nome ?? idx} type="button" onClick={() => onSelect?.(item.id)} title="Ver resumo e histórico da base" style={{
                   padding: isParticipando ? '8px 12px' : '10px 12px',
                   borderRadius: 8,
                   background: `${tier.cor}${isParticipando ? '0a' : '12'}`,
                   border: `1px solid ${tier.cor}${isParticipando ? '22' : '33'}`,
+                  color: 'inherit', textAlign: 'left', cursor: 'pointer', width: '100%',
                 }}>
                   <div style={{
                     fontWeight: isParticipando ? 500 : 700,
@@ -219,13 +232,14 @@ function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = fal
                       notas: {Number(item.notaMedia).toFixed(1)}
                     </div>
                   )}
-                </div>
+                </button>
               ))}
             </div>
           </div>
         )
       })}
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -319,15 +333,171 @@ function Top3Chips({ top3, showPoints, labelPts }) {
   )
 }
 
+function BasePerformanceDetail({ score, notas, isSoul, type, standalone = false, bases = [], onChangeBase, onBack }) {
+  if (!score) return null
+
+  const tier = getTier(score.pontos, isSoul)
+  const tierIndex = TIERS_ORDER.findIndex(item => item.nome === tier.nome)
+  const nextTier = tierIndex > 0 ? TIERS_ORDER[tierIndex - 1] : null
+  const pointsToNext = nextTier ? Math.max(0, nextTier.min - score.pontos) : 0
+  const components = [
+    { label: 'Desafios', value: score.componentes.desafios },
+    { label: 'Média das notas', value: score.componentes.notas },
+    { label: 'Discípulos', value: score.componentes.discipulos },
+    { label: 'Batismos', value: score.componentes.batismos },
+  ]
+  const reportAccent = isSoul ? '#FF8F00' : '#22D3EE'
+  const reportLabel = isSoul ? 'Soul+' : 'G148 Teen'
+
+  return (
+    <div className={`${standalone ? 'base-report-page' : 'card section fade-in'} ${isSoul ? 'report-soul' : 'report-teen'}`} style={standalone ? undefined : { borderLeft: `4px solid ${tier.cor}` }}>
+      <div className="base-report-actions no-print">
+        <button className={`btn btn-outline report-print-button ${isSoul ? 'report-print-button-soul' : 'report-print-button-teen'}`} onClick={() => window.print()}>🖨️ Imprimir / PDF</button>
+        {standalone && <button className="btn btn-outline report-back-button" onClick={onBack}>← Voltar ao ranking</button>}
+        {!standalone && <button className="btn btn-outline" onClick={() => onChangeBase?.(score.id)}>↗ Abrir página completa</button>}
+      </div>
+      {standalone && bases.length > 0 && (
+        <div className="base-report-selector no-print">
+          <div className="base-report-filter-field">
+            <label htmlFor="base-report-tier-select">Faixa de classificação</label>
+            <select
+              id="base-report-tier-select"
+              value={tier.nome}
+              onChange={e => {
+                const firstBase = bases
+                  .filter(base => getTier(base.pontos, isSoul).nome === e.target.value)
+                  .sort((a, b) => String(a.nome ?? '').localeCompare(String(b.nome ?? ''), 'pt-BR', { sensitivity: 'base' }))[0]
+                if (firstBase) onChangeBase?.(firstBase.id)
+              }}
+            >
+              {TIERS_ORDER.map(item => <option key={item.nome} value={item.nome}>{item.icon} {item.nome}</option>)}
+            </select>
+          </div>
+          <div className="base-report-filter-field">
+            <label htmlFor="base-report-select">Base em conferência</label>
+            <select id="base-report-select" value={score.id} onChange={e => onChangeBase?.(e.target.value)}>
+              {bases
+                .filter(base => getTier(base.pontos, isSoul).nome === tier.nome)
+                .sort((a, b) => String(a.nome ?? '').localeCompare(String(b.nome ?? ''), 'pt-BR', { sensitivity: 'base' }))
+                .map(base => <option key={base.id} value={base.id}>{base.nome}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+      <div className="base-report-heading" style={{ borderColor: reportAccent }}>
+        <div className="base-report-brand" style={{ color: reportAccent }}>{reportLabel}</div>
+        <div className="base-report-document-title">Relatório Oficial de Desempenho</div>
+        <div className="base-report-document-subtitle">Premiação e acompanhamento da base · {score.ano}</div>
+      </div>
+      <div className="card-header" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div className="card-title">🔎 Desenvolvimento da base: {score.nome}</div>
+          <div style={{ fontSize: 12, opacity: 0.6, marginTop: 3 }}>
+            {[score.igreja, score.distrito, score.regiao].filter(Boolean).join(' · ')}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ color: tier.cor, fontWeight: 900, fontSize: 20 }}>{tier.icon} {tier.nome}</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>{score.pontos.toFixed(1)} pontos</div>
+        </div>
+      </div>
+
+      {score.trimestresDetalhados.map(trimestre => (
+        <section className="base-report-quarter" key={trimestre.trimestre}>
+          <div className="base-report-quarter-heading">
+            <div>
+              <div className="base-report-quarter-title">{trimestre.trimestre}º Trimestre</div>
+              <div className="base-report-quarter-period">{trimestre.periodo}</div>
+            </div>
+            <strong>{trimestre.total.toFixed(1)} pts</strong>
+          </div>
+
+          <h4>Desafios</h4>
+          {trimestre.desafios.length === 0 ? <div className="base-report-empty">Nenhum desafio pontuado.</div> : (
+            <div className="table-wrap"><table>
+              <thead><tr><th>Desafio</th><th>Categoria</th><th>Regra</th><th>Realizações</th><th>Pontos</th></tr></thead>
+              <tbody>{trimestre.desafios.map((desafio, index) => <tr key={`${desafio.id}-${index}`}>
+                <td>{desafio.nome}</td><td>{desafio.categoria || '—'}</td><td>{desafio.regra}</td><td>{desafio.realizacoes}</td><td><strong>{desafio.pontos.toFixed(1)}</strong></td>
+              </tr>)}</tbody>
+            </table></div>
+          )}
+
+          <h4>Notas</h4>
+          {trimestre.notas.length === 0 ? <div className="base-report-empty">Nenhuma nota lançada.</div> : (
+            <div className="table-wrap"><table>
+              <thead><tr><th>Data</th><th>Aluno</th><th>Prova</th><th>Nota</th></tr></thead>
+              <tbody>{trimestre.notas.map((nota, index) => <tr key={nota.id ?? nota.id_form ?? `${nota.data}-${index}`}>
+                <td>{String(nota.data ?? nota.Data ?? '').slice(0, 10)}</td><td>{nota.Membros ?? nota.nome_aluno ?? '—'}</td><td>{nota.titulo ?? nota.Titulo ?? '—'}</td><td><strong>{Number(nota.nota ?? nota.Nota).toFixed(1)}</strong></td>
+              </tr>)}</tbody>
+            </table></div>
+          )}
+
+          <h4>Cards de discipulado</h4>
+          {trimestre.cards.length === 0 ? <div className="base-report-empty">Nenhum card movimentado no trimestre.</div> : (
+            <div className="table-wrap"><table>
+              <thead><tr><th>Membro</th><th>Início</th><th>Encerramento</th><th>Critério</th><th>Pontos</th></tr></thead>
+              <tbody>{trimestre.cards.map((card, index) => <tr key={card.id ?? index}>
+                <td>{card.nome}</td><td>{card.data_inicio || '—'}</td><td>{card.data_fim || 'Em andamento'}</td><td>{card.data_fim ? 'Card concluído' : 'Card ativado'}</td><td><strong>{card.pontos.toFixed(1)}</strong></td>
+              </tr>)}</tbody>
+            </table></div>
+          )}
+
+          <h4>Batismos</h4>
+          {trimestre.batismos.length === 0 ? <div className="base-report-empty">Nenhum batismo registrado.</div> : (
+            <div className="table-wrap"><table>
+              <thead><tr><th>Data</th><th>Nome</th><th>Pontos</th></tr></thead>
+              <tbody>{trimestre.batismos.map((batismo, index) => <tr key={batismo.id ?? index}>
+                <td>{batismo.data || `Mês ${batismo.mes}`}</td><td>{batismo.nome || '—'}</td><td><strong>{batismo.pontos.toFixed(1)}</strong></td>
+              </tr>)}</tbody>
+            </table></div>
+          )}
+
+          <div className="base-report-quarter-total">Fechamento do {trimestre.trimestre}º trimestre: <strong>{trimestre.total.toFixed(1)} pontos</strong></div>
+        </section>
+      ))}
+
+      <div className="stats-grid" style={{ marginBottom: 18 }}>
+        {components.map(component => (
+          <div key={component.label} className="stat-card c1" style={{ padding: '12px 10px' }}>
+            <div className="stat-num" style={{ fontSize: 22 }}>{component.value.toFixed(1)}</div>
+            <div className="stat-label">{component.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ padding: '10px 12px', marginBottom: 18, borderRadius: 8, background: `${tier.cor}12`, border: `1px solid ${tier.cor}33`, fontSize: 13 }}>
+        {nextTier
+          ? <>A base está na faixa <strong style={{ color: tier.cor }}>{tier.nome}</strong> porque acumulou <strong>{score.pontos.toFixed(1)} pontos</strong>. Faltam <strong>{pointsToNext.toFixed(1)} pontos</strong> para {nextTier.icon} <strong>{nextTier.nome}</strong> ({nextTier.min} pontos).</>
+          : <>A base está na faixa máxima, <strong style={{ color: tier.cor }}>{tier.nome}</strong>, com <strong>{score.pontos.toFixed(1)} pontos</strong>.</>}
+      </div>
+
+      <div className="base-report-closing">
+        <h3>Fechamento anual</h3>
+        <div className="base-report-closing-grid">
+          {components.map(component => <div key={component.label}><span>{component.label}</span><strong>{component.value.toFixed(1)}</strong></div>)}
+          <div className="base-report-closing-total"><span>Total geral</span><strong>{score.pontos.toFixed(1)} pontos</strong></div>
+        </div>
+      </div>
+      <div className="base-report-signatures">
+        {['Professor(a)', 'Coordenador(a)', 'Responsável ANC'].map(label => <div key={label} className="base-report-signature"><div className="base-report-signature-line" /><span>{label}</span><small>Assinatura e data</small></div>)}
+      </div>
+    </div>
+  )
+}
+
 // ── Componente principal ─────────────────────────────────────────
 export default function Ranking() {
   const { type } = useParams()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
+  const reportBaseId = searchParams.get('relatorio') === 'base' ? searchParams.get('base') : ''
+  const reportYear = Number(searchParams.get('ano')) || anoAtual()
 
   const isAdmin = useAuthStore(s => s.isAdmin)
   const canSeePoints = isAdmin
 
-  const [ano, setAno]                 = useState(anoAtual())
+  const [ano, setAno]                 = useState(reportYear)
 
   const [view, setView]               = useState('bases')   // 'bases' | 'alunos'
   const [nivel, setNivel]             = useState('geral')
@@ -590,11 +760,123 @@ export default function Ranking() {
         return s + (done ? Number(d.pontos_total) : 0)
       }, 0)
 
+      const desafiosDetalhados = []
+      trimestresConfig.forEach(tc => {
+        const sabadosTc = gerarSabados(tc.primeiro_sabado, tc.ultimo_sabado)
+        desafiosSemanais.forEach(d => {
+          const divisor = divisorCadencia(d, sabadosTc)
+          const realizacoes = todosRegistros.filter(r =>
+            r.base_id === baseId && r.desafio_id === d.id && r.realizado && sabadosTc.includes(r.data_sabado)
+          ).length
+          if (realizacoes > 0) desafiosDetalhados.push({
+            id: `${d.id}-${tc.trimestre}`, nome: d.nome, categoria: d.categoria,
+            regra: `Semanal · ${realizacoes} ÷ ${divisor} do trimestre`, realizacoes,
+            pontos: realizacoes * (Number(d.pontos_total) / divisor),
+          })
+        })
+      })
+      desafiosMensais.forEach(d => {
+        const done = todosMarcos.some(m => m.base_id === baseId && m.desafio_id === d.id && m.mes === d.mes_ref && m.realizado)
+        if (done) desafiosDetalhados.push({
+          id: d.id, nome: d.nome, categoria: d.categoria,
+          regra: `Mensal · mês ${d.mes_ref}`, realizacoes: 1, pontos: Number(d.pontos_total),
+        })
+      })
+      desafiosPontuais.forEach(d => {
+        const divisor = trimestresConfig.length || 4
+        const realizacoes = todosMarcos.filter(m => m.base_id === baseId && m.desafio_id === d.id && m.mes != null && m.realizado).length
+        if (realizacoes > 0) desafiosDetalhados.push({
+          id: d.id, nome: d.nome, categoria: d.categoria,
+          regra: `Pontual · dividido por ${divisor} trimestres`, realizacoes,
+          pontos: realizacoes * (Number(d.pontos_total) / divisor),
+        })
+      })
+      desafiosAnuais.forEach(d => {
+        const done = todosMarcos.some(m => m.base_id === baseId && m.desafio_id === d.id && m.trimestre == null && m.mes == null && m.realizado)
+        if (done) desafiosDetalhados.push({
+          id: d.id, nome: d.nome, categoria: d.categoria,
+          regra: 'Anual · realizado', realizacoes: 1, pontos: Number(d.pontos_total),
+        })
+      })
+
       const baseNameNorm = normalizeBaseName(base.Base ?? base.nome ?? '')
       const notaMedia     = notasMediaPorBase.byId?.[String(baseId)] ?? notasMediaPorBase.byName?.[baseNameNorm] ?? 0
       const discipulosPts = discipulosPtsPorBase[baseId] ?? 0
       const batismosPts   = batismosPtsPorBase[baseId]  ?? 0
       const pontos = Math.round((weeklyPts + mensaisPts + pontuaisPts + anuaisPts + notaMedia + discipulosPts + batismosPts) * 10) / 10
+
+      const componentes = {
+        desafios: Math.round((weeklyPts + mensaisPts + pontuaisPts + anuaisPts) * 10) / 10,
+        notas: Math.round(notaMedia * 10) / 10,
+        discipulos: Math.round(discipulosPts * 10) / 10,
+        batismos: Math.round(batismosPts * 10) / 10,
+      }
+
+      const primeirosCartoes = {}
+      const ptsPorCartao = Number(discipulosConfig?.pontos_por_cartao ?? 0)
+      const ptsPorBatismo = Number(batismosConfig?.pontos_por_batismo ?? 0)
+      discipulosCartoes.forEach(card => {
+        const key = `${card.base_id}|${card.membro_id}`
+        if (!primeirosCartoes[key] || (card.ordem ?? 999) < (primeirosCartoes[key].ordem ?? 999)) primeirosCartoes[key] = card
+      })
+
+      const trimestresDetalhados = trimestresConfig.map(tc => {
+        const sabadosTc = gerarSabados(tc.primeiro_sabado, tc.ultimo_sabado)
+        const desafios = []
+        desafiosSemanais.forEach(d => {
+          const divisor = divisorCadencia(d, sabadosTc)
+          const realizacoes = todosRegistros.filter(r => r.base_id === baseId && r.desafio_id === d.id && r.realizado && sabadosTc.includes(r.data_sabado)).length
+          if (realizacoes) desafios.push({ id: d.id, nome: d.nome, categoria: d.categoria, regra: `Semanal · ${realizacoes} ÷ ${divisor}`, realizacoes, pontos: realizacoes * (Number(d.pontos_total) / divisor) })
+        })
+        desafiosMensais.filter(d => Number(d.mes_ref) >= Number(String(tc.primeiro_sabado).slice(5, 7)) && Number(d.mes_ref) <= Number(String(tc.ultimo_sabado).slice(5, 7))).forEach(d => {
+          const realizado = todosMarcos.some(m => m.base_id === baseId && m.desafio_id === d.id && m.mes === d.mes_ref && m.realizado)
+          if (realizado) desafios.push({ id: d.id, nome: d.nome, categoria: d.categoria, regra: `Mensal · mês ${d.mes_ref}`, realizacoes: 1, pontos: Number(d.pontos_total) })
+        })
+        desafiosPontuais.forEach(d => {
+          const realizacoes = todosMarcos.filter(m => m.base_id === baseId && m.desafio_id === d.id && m.mes != null && m.realizado && Number(m.mes) >= Number(String(tc.primeiro_sabado).slice(5, 7)) && Number(m.mes) <= Number(String(tc.ultimo_sabado).slice(5, 7))).length
+          const divisor = trimestresConfig.length || 4
+          if (realizacoes) desafios.push({ id: d.id, nome: d.nome, categoria: d.categoria, regra: `Pontual · ÷ ${divisor} trimestres`, realizacoes, pontos: realizacoes * (Number(d.pontos_total) / divisor) })
+        })
+        if (tc.trimestre === trimestresConfig[trimestresConfig.length - 1]?.trimestre) desafiosAnuais.forEach(d => {
+          const realizado = todosMarcos.some(m => m.base_id === baseId && m.desafio_id === d.id && m.trimestre == null && m.mes == null && m.realizado)
+          if (realizado) desafios.push({ id: d.id, nome: d.nome, categoria: d.categoria, regra: 'Anual · fechamento', realizacoes: 1, pontos: Number(d.pontos_total) })
+        })
+
+        const notasDoTrimestre = todasNotas.filter(r => {
+          const rowBaseId = String(r.id_base ?? r.base_id ?? '').trim()
+          const studentKey = r.id_membros ?? (rowBaseId + '|' + (r.Membros ?? r.nome_aluno ?? ''))
+          const nota = Number(r.nota ?? r.Nota)
+          const data = String(r.data ?? r.Data ?? '').slice(0, 10)
+          const info = basePorAluno[studentKey]
+          return Number.isFinite(nota) && data >= tc.primeiro_sabado && data <= tc.ultimo_sabado && String(info?.baseId ?? rowBaseId) === String(baseId)
+        })
+        const notasPorDia = {}
+        notasDoTrimestre.forEach(r => {
+          const data = String(r.data ?? r.Data ?? '').slice(0, 10)
+          const nota = Number(r.nota ?? r.Nota)
+          if (!notasPorDia[data]) notasPorDia[data] = { sum: 0, count: 0 }
+          notasPorDia[data].sum += nota
+          notasPorDia[data].count += 1
+        })
+        const notaPts = Object.values(notasPorDia).reduce((sum, day) => sum + day.sum / day.count, 0)
+        const cards = Object.values(primeirosCartoes).filter(card => card.base_id === baseId && card.data_inicio >= tc.primeiro_sabado && card.data_inicio <= tc.ultimo_sabado).map(card => ({
+          ...card, nome: card.nome_membro ?? card.membro_nome ?? card.membro_id ?? 'Membro', pontos: card.data_fim ? ptsPorCartao : ptsPorCartao / 2,
+        }))
+        const batismos = batismosRegs.filter(item => item.base_id === baseId && Number(item.mes) >= Number(String(tc.primeiro_sabado).slice(5, 7)) && Number(item.mes) <= Number(String(tc.ultimo_sabado).slice(5, 7))).map(item => ({ ...item, pontos: ptsPorBatismo }))
+        const desafiosPts = desafios.reduce((sum, item) => sum + item.pontos, 0)
+        const cardsPts = cards.reduce((sum, item) => sum + item.pontos, 0)
+        const batismosPts = batismos.reduce((sum, item) => sum + item.pontos, 0)
+        return {
+          trimestre: tc.trimestre,
+          periodo: `${tc.primeiro_sabado} a ${tc.ultimo_sabado}`,
+          desafios, notas: notasDoTrimestre, cards, batismos,
+          desafiosPts: Math.round(desafiosPts * 10) / 10,
+          notasPts: Math.round(notaPts * 10) / 10,
+          cardsPts: Math.round(cardsPts * 10) / 10,
+          batismosPts: Math.round(batismosPts * 10) / 10,
+          total: Math.round((desafiosPts + notaPts + cardsPts + batismosPts) * 10) / 10,
+        }
+      })
 
       return {
         id: baseId,
@@ -609,9 +891,13 @@ export default function Ranking() {
         notaMedia: Math.round(notaMedia * 10) / 10,
         discipulosPts: Math.round(discipulosPts * 10) / 10,
         batismosPts:   Math.round(batismosPts   * 10) / 10,
+        componentes,
+        ano,
+        trimestresDetalhados,
+        desafiosDetalhados,
       }
     }).sort((a, b) => b.pontos - a.pontos)
-  }, [basesFiltradas, catalogo, trimestresConfig, todosRegistros, todosMarcos, notasMediaPorBase, discipulosPtsPorBase, batismosPtsPorBase])
+  }, [basesFiltradas, catalogo, trimestresConfig, todosRegistros, todosMarcos, todasNotas, basePorAluno, notasMediaPorBase, discipulosCartoes, discipulosConfig, batismosRegs, batismosConfig, discipulosPtsPorBase, batismosPtsPorBase])
 
   // Ranking individual de alunos:
   // pontos = soma das médias trimestrais do aluno. Cada trimestre pontua
@@ -806,6 +1092,23 @@ export default function Ranking() {
     return items
   }, [scoresPorBase, nivel, filtroRegiao, filtroDistrito, filtroIgreja])
 
+  const scoreBaseDetalhada = useMemo(() =>
+    scoresPorBase.find(base => String(base.id) === String(reportBaseId)) ?? null,
+    [scoresPorBase, reportBaseId]
+  )
+
+  const notasBaseDetalhada = useMemo(() => {
+    if (!scoreBaseDetalhada) return []
+    return todasNotas
+      .filter(nota => {
+        const rowBaseId = String(nota.id_base ?? nota.base_id ?? '').trim()
+        const studentKey = nota.id_membros ?? (rowBaseId + '|' + (nota.Membros ?? nota.nome_aluno ?? ''))
+        return String(basePorAluno[studentKey]?.baseId ?? rowBaseId) === String(scoreBaseDetalhada.id)
+      })
+      .filter(nota => Number.isFinite(Number(nota.nota ?? nota.Nota)))
+      .sort((a, b) => String(b.data ?? b.Data ?? '').localeCompare(String(a.data ?? a.Data ?? '')))
+  }, [todasNotas, basePorAluno, scoreBaseDetalhada])
+
   // Ranking de alunos filtrado
   const rankingAlunosFiltrado = useMemo(() => {
     let items = rankingAlunos.map(a => ({ ...a, isSoul: type === 'soul' }))
@@ -855,6 +1158,27 @@ export default function Ranking() {
 
   const showGeoFilters = ['regional', 'distrital', 'igreja', 'base'].includes(nivel)
   const showBaseFilter = view === 'alunos' && nivel === 'base'
+
+  if (reportBaseId && !isAdmin) return <Navigate to="/admin/login" replace />
+
+  if (reportBaseId) {
+    return (
+      <div className="base-report-shell">
+        {isLoading ? <div className="card empty-state"><div className="spinner" /></div> : (
+          <BasePerformanceDetail
+            score={scoreBaseDetalhada}
+            notas={notasBaseDetalhada}
+            isSoul={type === 'soul'}
+            type={type}
+            bases={scoresPorBase}
+            onChangeBase={baseId => navigate(`/${type || 'teen'}/ranking?relatorio=base&base=${encodeURIComponent(baseId)}&ano=${ano}`, { replace: true })}
+            onBack={() => navigate(`/${type || 'teen'}/ranking`)}
+            standalone
+          />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -1061,7 +1385,9 @@ export default function Ranking() {
           
           {/* Layout em 4 colunas para ranking de bases */}
           {view === 'bases' ? (
-            <BaseRankingByTiers items={listAtual} showPoints={canSeePoints} labelPts={labelPts} isAdmin={isAdmin} />
+            <BaseRankingByTiers items={listAtual} showPoints={canSeePoints} labelPts={labelPts} isAdmin={isAdmin} onSelect={isAdmin ? (id) => {
+              navigate(`/${type || 'teen'}/ranking?relatorio=base&base=${encodeURIComponent(id)}&ano=${ano}`)
+            } : undefined} />
           ) : (
             <>
               {top3.length > 0 && (
