@@ -1739,7 +1739,7 @@ function BatismosTab({ baseId, ano, tipo, isAdmin, isSoul }) {
         const path = `batismos/${baseId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`
         foto_url = await db.uploadArquivo('anc-media', path, file)
       }
-      if (!url) throw new Error('Selecione uma imagem.')
+      if (!foto_url) throw new Error('Selecione uma imagem.')
       return db.upsertBatismo({ id, base_id: baseId, nome, mes: mes || null, ano, foto_url, obs })
     },
     onSuccess: () => {
@@ -1771,7 +1771,7 @@ function BatismosTab({ baseId, ano, tipo, isAdmin, isSoul }) {
   async function handleSubmit(e) {
     e.preventDefault()
     if (!form.nome) { toast.error('Informe o nome do batizado.'); return }
-    if (!fileInput && !editItem?.url) { toast.error('Selecione uma imagem.'); return }
+    if (!fileInput && !editItem?.foto_url) { toast.error('Selecione uma imagem.'); return }
     setUploading(true)
     try {
       await upsert.mutateAsync({ id: editItem?.id, ...form, file: fileInput })

@@ -121,6 +121,34 @@ function normalizeText(value) {
     .replace(/[^a-z0-9]/g, '')
 }
 
+// O Supabase Storage rejeita chaves com acentos e vários símbolos ("Invalid key").
+// Remove acentos e troca qualquer caractere fora de [A-Za-z0-9._-] por "_",
+// segmento a segmento, preservando as barras do caminho e a extensão.
+function sanitizeStorageSegment(segment) {
+  const clean = String(segment ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[._]+|_+$/g, '')
+  return clean || 'arquivo'
+}
+
+function sanitizeStoragePath(path) {
+  const segments = String(path ?? '').split('/').filter(Boolean)
+  const last = segments.length - 1
+  return segments
+    .map((segment, i) => {
+      if (i !== last) return sanitizeStorageSegment(segment)
+      const dot = segment.lastIndexOf('.')
+      if (dot <= 0) return sanitizeStorageSegment(segment)
+      const name = sanitizeStorageSegment(segment.slice(0, dot))
+      const ext = segment.slice(dot + 1).normalize('NFD').replace(/[^A-Za-z0-9]/g, '').toLowerCase()
+      return ext ? `${name}.${ext}` : name
+    })
+    .join('/')
+}
+
 function matchesBaseRow(row, base_id, base_nome) {
   const targetId = String(base_id ?? '').trim()
   const targetName = normalizeText(base_nome)
@@ -1907,7 +1935,7 @@ export const db = {
   async uploadArquivo(bucket, path, file) {
     const { data, error } = await supabase.storage
       .from(bucket)
-      .upload(path, file, { upsert: true })
+      .upload(sanitizeStoragePath(path), file, { upsert: true })
     if (error) throw error
     const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(data.path)
     return urlData.publicUrl
