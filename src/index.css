@@ -139,6 +139,8 @@ body {
   .ranking-screen { display: none !important; }
   .ranking-print { display: block !important; }
   .ranking-print-faixa { break-inside: auto; page-break-inside: auto; }
+  /* Cada faixa (Sou Mega, Sou Master…) começa em página própria */
+  .ranking-print-faixa + .ranking-print-faixa { break-before: page; page-break-before: always; }
   .ranking-print-faixa h2 { break-after: avoid; page-break-after: avoid; }
   .ranking-print thead { display: table-header-group; }
   .ranking-print tr { break-inside: avoid; page-break-inside: avoid; }
