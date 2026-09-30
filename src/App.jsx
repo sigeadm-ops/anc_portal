@@ -12,6 +12,7 @@ import Provas from './pages/Provas'
 import Departamentos from './pages/Departamentos'
 import AdminConfig from './pages/AdminConfig'
 import AdminLogin from './pages/AdminLogin'
+import ValidacaoLancamentos from './pages/ValidacaoLancamentos'
 
 import { useUIStore } from './store/uiStore'
 
@@ -96,6 +97,9 @@ export default function App() {
           {/* Rotas ADMIN — requerem autenticação */}
           <Route path="admin/departamentos" element={
             <AdminRoute><Departamentos /></AdminRoute>
+          } />
+          <Route path="admin/validacao" element={
+            <AdminRoute><ValidacaoLancamentos /></AdminRoute>
           } />
           <Route path="admin/config" element={
             <AdminRoute><AdminConfig /></AdminRoute>

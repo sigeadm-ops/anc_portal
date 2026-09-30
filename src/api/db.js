@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { SheetsAPI } from './sheetsApi'
+import { avaliarMetaDiscipulado, isDesafioDiscipulado, membroContaNaBase, META_PERCENTUAL } from '../lib/discipuladoMeta'
 
 // Usado para preencher `created_by` nos métodos dedicados abaixo (Notas,
 // Desafios, Discípulos, Batismos, Biblioteca) — só na criação, nunca em
@@ -1836,6 +1837,58 @@ export const db = {
 
   // Sincroniza automaticamente o desafio anual "Batismo" com o count real de batismos.
   // Chamado após cada upsert/delete de batismo.
+  // Marca/desmarca automaticamente o desafio anual de discipulado
+  // ("Discípulo Teen (40% ativos)") conforme a meta calculada pelos cartões
+  // e alunos cadastrados da base (regra em lib/discipuladoMeta.js).
+  // Chamado após salvar/excluir cartão e após cadastrar/editar/excluir membro.
+  // Retorna { alterado, realizado, avaliacao } ou null se não se aplica.
+  async syncDiscipuladoDesafio(base_id, ano) {
+    if (!base_id || !ano) return null
+
+    const { data: base, error: baseErr } = await supabase
+      .from('Bases').select('id_base, Tipo').eq('id_base', base_id).maybeSingle()
+    if (baseErr) throw baseErr
+    if (!base) return null
+
+    const catalogo = await this.getDesafiosCatalogo(base.Tipo || 'G148 Teen')
+    const desafio = catalogo.find(isDesafioDiscipulado)
+    if (!desafio) return null
+
+    const [membrosResp, cartoesResp, marcoResp] = await Promise.all([
+      supabase.from('Membros').select('id_membros, Status').eq('id_base', base_id),
+      supabase.from('discipulos_cartoes').select('membro_id, data_inicio, data_fim').eq('base_id', base_id).eq('ano', ano),
+      supabase.from('desafios_marcos').select('realizado, data_realizacao, obs')
+        .eq('base_id', base_id).eq('desafio_id', desafio.id).eq('ano', ano)
+        .is('trimestre', null).is('mes', null).maybeSingle(),
+    ])
+    if (membrosResp.error) throw membrosResp.error
+    if (cartoesResp.error) throw cartoesResp.error
+    if (marcoResp.error) throw marcoResp.error
+
+    const cadastradosIds = (membrosResp.data ?? []).filter(membroContaNaBase).map(m => m.id_membros)
+    const avaliacao = avaliarMetaDiscipulado(cadastradosIds, cartoesResp.data ?? [])
+    const existente = marcoResp.data
+    const realizado = avaliacao.metaAtingida
+    const obs = `Automático: ${avaliacao.alunosComCartao} de ${avaliacao.cadastrados} alunos com cartão ativado (meta ${META_PERCENTUAL}% = ${avaliacao.metaAlunos}).`
+    const alterado = Boolean(existente?.realizado) !== realizado
+
+    // Nada a gravar: nunca foi marcado e não atingiu, ou já está igual
+    if (!existente && !realizado) return { alterado: false, realizado, avaliacao }
+    if (existente && !alterado && existente.obs === obs) return { alterado: false, realizado, avaliacao }
+
+    await this.upsertMarco({
+      base_id,
+      desafio_id: desafio.id,
+      ano,
+      trimestre: null,
+      mes: null,
+      realizado,
+      data_realizacao: realizado ? (existente?.data_realizacao ?? new Date().toISOString().slice(0, 10)) : null,
+      obs,
+    })
+    return { alterado, realizado, avaliacao }
+  },
+
   async syncBatismoDesafio(base_id, ano, tipo) {
     const [batismos, catalogo] = await Promise.all([
       this.getBatismos(base_id, ano),

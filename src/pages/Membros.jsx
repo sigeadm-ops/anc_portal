@@ -107,6 +107,20 @@ export default function Membros() {
   const validRows = staging.filter(r => r.Membros.trim().length > 0)
   const headerOk = !!header.id_base
 
+  // Mudou a quantidade de alunos da base → recalcula a meta de discipulado
+  // e marca/desmarca o desafio anual automaticamente (lib/discipuladoMeta.js)
+  async function syncDiscipulado(...baseIds) {
+    const ano = new Date().getFullYear()
+    const unicos = [...new Set(baseIds.filter(Boolean).map(String))]
+    try {
+      await Promise.all(unicos.map(baseId => db.syncDiscipuladoDesafio(baseId, ano)))
+      qc.invalidateQueries({ queryKey: ['desafios_marcos'] })
+      qc.invalidateQueries({ queryKey: ['ranking_marcos', ano] })
+    } catch {
+      // sync não-crítico: falha silenciosa (o relatório de validação aponta divergências)
+    }
+  }
+
   async function handleSaveAll() {
     if (!headerOk) { toast.error('Selecione a Base.'); return }
     if (!validRows.length) { toast.error('Preencha o nome de ao menos 1 membro.'); return }
@@ -145,6 +159,7 @@ export default function Membros() {
     if (saved > 0) {
       toast.success(`${saved} membro${saved !== 1 ? 's' : ''} cadastrado${saved !== 1 ? 's' : ''}!`)
       setStaging([newRow()])
+      syncDiscipulado(header.id_base)
     }
   }
 
@@ -162,8 +177,10 @@ export default function Membros() {
   async function confirmarExclusaoMembro() {
     const { id, nome, deps } = pendingDelete
     const hasDeps = Object.values(deps).some(qtd => qtd > 0)
+    const baseDoMembro = (data || []).find(m => String(m.id_membros) === String(id))?.id_base
     try {
       await db.excluirMembroCascata(id)
+      syncDiscipulado(baseDoMembro)
       qc.invalidateQueries({ queryKey: ['Membros'] })
       qc.invalidateQueries({ queryKey: ['Notas_Teen'] })
       qc.invalidateQueries({ queryKey: ['Notas_Soul'] })
@@ -190,8 +207,10 @@ export default function Membros() {
     const statusMudou = (Status || 'Ativo') !== (_originalStatus || 'Ativo')
     // Sempre salva em ISO (yyyy-mm-dd) para consistência no banco
     const dataCadFinal = statusMudou ? today() : (toInputDate(DataCad) || today())
+    const baseAnterior = (data || []).find(m => String(m.id_membros) === String(id_membros))?.id_base
     await update.mutateAsync({ id: id_membros, data: { id_base, Membros, Responsavel, Email, Endereco, RG, Camiseta, Status, DataCad: dataCadFinal } })
     toast.success('Membro atualizado!')
+    syncDiscipulado(baseAnterior, id_base)
     setEditingMembro(null)
   }
 

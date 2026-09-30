@@ -135,34 +135,73 @@ function Podium({ top3, showPoints, labelPts = 'pts' }) {
   )
 }
 
-// Novo layout em 4 colunas por tier (para view de bases)
-function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = false, onSelect }) {
-  const [tierFilter, setTierFilter] = useState('Todas')
+function compareNome(a, b) {
+  return String(a.nome ?? '').localeCompare(String(b.nome ?? ''), 'pt-BR', { sensitivity: 'base' })
+}
 
-  // Agrupa os itens por tier
-  const itemsByTier = useMemo(() => {
-    const grouped = {}
-    TIERS_ORDER.forEach(t => { grouped[t.nome] = [] })
-    items.forEach(item => {
-      const tier = getTier(item.pontos, item.isSoul)
-      grouped[tier.nome].push(item)
-    })
-    // Ordena alfabeticamente dentro de cada tier
-    Object.keys(grouped).forEach(tierName => {
-      grouped[tierName].sort((a, b) => (a.nome ?? '').localeCompare(b.nome ?? '', 'pt-BR', { sensitivity: 'base' }))
-    })
-    return grouped
-  }, [items])
+// Ordena por nome ou por pontuação (maior → menor, empate por nome) e
+// atribui a colocação com empate compartilhado (1º, 2º, 2º, 4º…).
+function ordenarItens(lista, ordem) {
+  const ordenados = [...lista].sort((a, b) =>
+    ordem === 'pontuacao' ? (b.pontos - a.pontos) || compareNome(a, b) : compareNome(a, b)
+  )
+  let posAnterior = 0
+  return ordenados.map((item, idx) => {
+    const posicao = idx > 0 && ordenados[idx - 1].pontos === item.pontos ? posAnterior : idx + 1
+    posAnterior = posicao
+    return { ...item, posicao }
+  })
+}
+
+// Agrupa os itens por faixa, já ordenados dentro de cada faixa
+function agruparPorFaixa(items, ordem) {
+  const grouped = {}
+  TIERS_ORDER.forEach(t => { grouped[t.nome] = [] })
+  items.forEach(item => {
+    grouped[getTier(item.pontos, item.isSoul).nome].push(item)
+  })
+  Object.keys(grouped).forEach(tierName => {
+    grouped[tierName] = ordenarItens(grouped[tierName], ordem)
+  })
+  return grouped
+}
+
+const ORDENS = [
+  { key: 'alfabetica', label: '🔤 Alfabética' },
+  { key: 'pontuacao',  label: '🏅 Pontuação' },
+]
+
+// Novo layout em 4 colunas por tier (para view de bases)
+function BaseRankingByTiers({ items, showPoints, isAdmin = false, onSelect, tierFilter, onTierFilterChange, ordem, onOrdemChange }) {
+  const [abertos, setAbertos] = useState({})
+  const itemsByTier = useMemo(() => agruparPorFaixa(items, ordem), [items, ordem])
+  const mostrarPosicao = ordem === 'pontuacao'
+
+  function toggleAberto(id) {
+    setAbertos(prev => ({ ...prev, [id]: !prev[id] }))
+  }
 
   return (
     <>
-      <div className="tier-filter" role="group" aria-label="Filtrar bases por faixa">
-        <button type="button" className={tierFilter === 'Todas' ? 'active' : ''} onClick={() => setTierFilter('Todas')}>Todas</button>
-        {TIERS_ORDER.map(tier => (
-          <button key={tier.nome} type="button" className={tierFilter === tier.nome ? 'active' : ''} onClick={() => setTierFilter(tier.nome)}>
-            {tier.icon} {tier.nome}
-          </button>
-        ))}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div className="tier-filter" role="group" aria-label="Filtrar bases por faixa">
+          <button type="button" className={tierFilter === 'Todas' ? 'active' : ''} onClick={() => onTierFilterChange('Todas')}>Todas</button>
+          {TIERS_ORDER.map(tier => (
+            <button key={tier.nome} type="button" className={tierFilter === tier.nome ? 'active' : ''} onClick={() => onTierFilterChange(tier.nome)}>
+              {tier.icon} {tier.nome}
+            </button>
+          ))}
+        </div>
+        {isAdmin && onOrdemChange && (
+          <div className="tier-filter" role="group" aria-label="Ordenar dentro de cada faixa">
+            <span style={{ fontSize: 12, opacity: 0.6, alignSelf: 'center', fontWeight: 600 }}>Ordenar:</span>
+            {ORDENS.map(o => (
+              <button key={o.key} type="button" className={ordem === o.key ? 'active' : ''} onClick={() => onOrdemChange(o.key)}>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, paddingTop: 12 }}>
       {TIERS_ORDER.map(tier => {
@@ -170,6 +209,8 @@ function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = fal
         if (tierFilter !== 'Todas' && tierFilter !== tier.nome) return null
         if (basesNoTier.length === 0) return null
         const isParticipando = tier.nome === 'Participando'
+        // Sanfona com a composição dos agrupamentos é exclusiva do admin
+        const saoGrupos = isAdmin && Array.isArray(basesNoTier[0]?.basesList)
 
         return (
           <div key={tier.nome} style={{
@@ -195,51 +236,188 @@ function BaseRankingByTiers({ items, showPoints, labelPts = 'pts', isAdmin = fal
                 </div>
               )}
               <div style={{ fontSize: 12, opacity: 0.95, marginTop: 4, fontWeight: 600 }}>
-                {basesNoTier.length} {basesNoTier.length === 1 ? 'base' : 'bases'}
+                {basesNoTier.length} {saoGrupos
+                  ? (basesNoTier.length === 1 ? 'entrada' : 'entradas')
+                  : (basesNoTier.length === 1 ? 'base' : 'bases')}
               </div>
             </div>
 
-            {/* Lista de bases */}
+            {/* Lista de bases (ou agrupamentos com sanfona das bases que os compõem) */}
             <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {basesNoTier.map((item, idx) => (
-                <button key={item.id ?? item.nome ?? idx} type="button" onClick={() => onSelect?.(item.id)} title="Ver resumo e histórico da base" style={{
+              {basesNoTier.map((item, idx) => {
+                const isGrupo = saoGrupos && Array.isArray(item.basesList)
+                const aberto = isGrupo && !!abertos[item.id]
+                const cardStyle = {
                   padding: isParticipando ? '8px 12px' : '10px 12px',
                   borderRadius: 8,
                   background: `${tier.cor}${isParticipando ? '0a' : '12'}`,
                   border: `1px solid ${tier.cor}${isParticipando ? '22' : '33'}`,
-                  color: 'inherit', textAlign: 'left', cursor: 'pointer', width: '100%',
-                }}>
-                  <div style={{
-                    fontWeight: isParticipando ? 500 : 700,
-                    fontSize: isParticipando ? 13 : 14,
-                    marginBottom: item.sub ? 2 : 0,
-                    opacity: isParticipando ? 0.85 : 1,
-                  }}>
-                    {item.nome}
+                  color: 'inherit', textAlign: 'left', cursor: (isGrupo || onSelect) ? 'pointer' : 'default', width: '100%',
+                }
+                const conteudo = (
+                  <>
+                    <div style={{
+                      display: 'flex', alignItems: 'baseline', gap: 6,
+                      fontWeight: isParticipando ? 500 : 700,
+                      fontSize: isParticipando ? 13 : 14,
+                      marginBottom: item.sub ? 2 : 0,
+                      opacity: isParticipando ? 0.85 : 1,
+                    }}>
+                      {mostrarPosicao && <span style={{ color: tier.cor, fontWeight: 900, minWidth: 26 }}>{item.posicao}º</span>}
+                      <span style={{ flex: 1 }}>{item.nome}</span>
+                      {isGrupo && <span aria-hidden="true" style={{ fontSize: 11, opacity: 0.6 }}>{aberto ? '▾' : '▸'}</span>}
+                    </div>
+                    {item.sub && (
+                      <div style={{ fontSize: 11, opacity: 0.5 }}>
+                        {item.sub}
+                      </div>
+                    )}
+                    {isGrupo && (
+                      <div style={{ fontSize: 11, opacity: 0.6, marginTop: 2 }}>
+                        {item.extra} · {aberto ? 'ocultar' : 'ver'} composição
+                      </div>
+                    )}
+                    {(showPoints || isAdmin) && (
+                      <div style={{ marginTop: 4, textAlign: 'right', fontWeight: 800, color: tier.cor, fontSize: 12 }}>
+                        {Number(item.pontos ?? 0).toFixed(1)} pts
+                      </div>
+                    )}
+                    {isAdmin && !isGrupo && Number.isFinite(Number(item.notaMedia)) && (
+                      <div style={{ marginTop: 2, textAlign: 'right', fontSize: 11, opacity: 0.65 }}>
+                        notas: {Number(item.notaMedia).toFixed(1)}
+                      </div>
+                    )}
+                  </>
+                )
+
+                if (!isGrupo) {
+                  return (
+                    <button key={item.id ?? item.nome ?? idx} type="button" onClick={() => onSelect?.(item.id)} title={onSelect ? 'Ver resumo e histórico da base' : undefined} style={cardStyle}>
+                      {conteudo}
+                    </button>
+                  )
+                }
+
+                const composicao = ordenarItens(item.basesList, ordem)
+                return (
+                  <div key={item.id ?? item.nome ?? idx}>
+                    <button type="button" onClick={() => toggleAberto(item.id)} aria-expanded={aberto} title="Ver as bases que compõem a pontuação" style={cardStyle}>
+                      {conteudo}
+                    </button>
+                    {aberto && (
+                      <div style={{
+                        margin: '4px 0 0 10px', paddingLeft: 10,
+                        borderLeft: `2px solid ${tier.cor}55`,
+                        display: 'flex', flexDirection: 'column', gap: 4,
+                      }}>
+                        {composicao.map(base => (
+                          <button
+                            key={base.id}
+                            type="button"
+                            onClick={() => onSelect?.(base.id)}
+                            title={onSelect ? 'Ver resumo e histórico da base' : undefined}
+                            style={{
+                              display: 'flex', alignItems: 'baseline', gap: 6,
+                              padding: '6px 8px', borderRadius: 6, width: '100%', textAlign: 'left',
+                              background: `${base.tier?.cor ?? tier.cor}10`,
+                              border: `1px solid ${base.tier?.cor ?? tier.cor}2a`,
+                              color: 'inherit', cursor: onSelect ? 'pointer' : 'default', fontSize: 12,
+                            }}
+                          >
+                            {mostrarPosicao && <span style={{ fontWeight: 800, opacity: 0.7, minWidth: 24 }}>{base.posicao}º</span>}
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ fontWeight: 600 }}>{base.nome}</span>
+                              {base.tier && <span style={{ marginLeft: 4, fontSize: 10 }} title={base.tier.nome}>{base.tier.icon}</span>}
+                            </span>
+                            {(showPoints || isAdmin) && (
+                              <span style={{ fontWeight: 700, color: base.tier?.cor ?? tier.cor, flexShrink: 0 }}>
+                                {Number(base.pontos ?? 0).toFixed(1)}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {item.sub && (
-                    <div style={{ fontSize: 11, opacity: 0.5 }}>
-                      {item.sub}
-                    </div>
-                  )}
-                  {(showPoints || isAdmin) && (
-                    <div style={{ marginTop: 4, textAlign: 'right', fontWeight: 800, color: tier.cor, fontSize: 12 }}>
-                      {Number(item.pontos ?? 0).toFixed(1)} pts
-                    </div>
-                  )}
-                  {isAdmin && Number.isFinite(Number(item.notaMedia)) && (
-                    <div style={{ marginTop: 2, textAlign: 'right', fontSize: 11, opacity: 0.65 }}>
-                      notas: {Number(item.notaMedia).toFixed(1)}
-                    </div>
-                  )}
-                </button>
-              ))}
+                )
+              })}
             </div>
           </div>
         )
       })}
       </div>
     </>
+  )
+}
+
+// Versão para impressão: tabelas simples, respeitando nível, filtros,
+// faixa e ordenação escolhidos. Agrupamentos saem sempre expandidos.
+function RankingPrint({ view, items, tierFilter, ordem, titulo, filtrosDescricao, colunaNome }) {
+  const emitidoEm = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+  const mostrarPosicao = view === 'alunos' || ordem === 'pontuacao'
+
+  function linhasFaixa(lista) {
+    return lista.flatMap(item => {
+      const linhas = [(
+        <tr key={item.id}>
+          {mostrarPosicao && <td><strong>{item.posicao}º</strong></td>}
+          <td><strong>{item.nome}</strong>{item.basesList ? ` (${item.extra})` : ''}</td>
+          <td>{item.sub || '—'}</td>
+          <td><strong>{Number(item.pontos).toFixed(1)}</strong></td>
+        </tr>
+      )]
+      if (item.basesList) {
+        ordenarItens(item.basesList, ordem).forEach(base => linhas.push(
+          <tr key={`${item.id}-${base.id}`}>
+            {mostrarPosicao && <td style={{ paddingLeft: 16 }}>{base.posicao}º</td>}
+            <td style={{ paddingLeft: 16 }}>↳ {base.nome} <small>({base.tier?.nome})</small></td>
+            <td>{base.sub || '—'}</td>
+            <td>{Number(base.pontos).toFixed(1)}</td>
+          </tr>
+        ))
+      }
+      return linhas
+    })
+  }
+
+  const grupos = view === 'bases' ? agruparPorFaixa(items, ordem) : null
+
+  return (
+    <div className="ranking-print">
+      <h1 style={{ fontSize: '16pt', margin: '0 0 4px' }}>{titulo}</h1>
+      <div style={{ fontSize: '9pt', marginBottom: 2 }}>{filtrosDescricao}</div>
+      <div style={{ fontSize: '8pt', marginBottom: 12 }}>Emitido em {emitidoEm}</div>
+
+      {view === 'alunos' ? (
+        <table>
+          <thead><tr><th style={{ width: 50 }}>Pos.</th><th>Aluno</th><th>Base</th><th style={{ width: 90 }}>Provas</th><th style={{ width: 80 }}>Pontos</th></tr></thead>
+          <tbody>
+            {ordenarItens(items, 'pontuacao').map(item => (
+              <tr key={item.id}>
+                <td>{item.posicao}º</td><td>{item.nome}</td><td>{item.base || '—'}</td><td>{item.count}</td><td>{Number(item.pontos).toFixed(1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        TIERS_ORDER
+          .filter(tier => (tierFilter === 'Todas' || tierFilter === tier.nome) && grupos[tier.nome].length > 0)
+          .map(tier => (
+            <section key={tier.nome} className="ranking-print-faixa">
+              <h2 style={{ fontSize: '12pt', margin: '14px 0 6px' }}>
+                {tier.icon} {tier.nome} — {grupos[tier.nome].length} {grupos[tier.nome].length === 1 ? 'entrada' : 'entradas'}
+              </h2>
+              <table>
+                <thead><tr>
+                  {mostrarPosicao && <th style={{ width: 50 }}>Pos.</th>}
+                  <th>{colunaNome}</th><th>Localização</th><th style={{ width: 80 }}>Pontos</th>
+                </tr></thead>
+                <tbody>{linhasFaixa(grupos[tier.nome])}</tbody>
+              </table>
+            </section>
+          ))
+      )}
+    </div>
   )
 }
 
@@ -505,6 +683,10 @@ export default function Ranking() {
   const [filtroDistrito, setFiltroDistrito]   = useState('')
   const [filtroIgreja, setFiltroIgreja]       = useState('')
   const [filtroBase, setFiltroBase]           = useState('')
+  const [tierFilter, setTierFilter]           = useState('Todas')
+  const [ordemBases, setOrdemBases]           = useState('alfabetica') // 'alfabetica' | 'pontuacao' (só admin)
+  // Público sempre vê em ordem alfabética; a ordenação por pontuação é exclusiva do admin
+  const ordemEfetiva = isAdmin ? ordemBases : 'alfabetica'
   const LIVE_REFRESH_MS = 8000
 
   const { data: bases = [] }     = useTable('Bases')
@@ -1043,46 +1225,43 @@ export default function Ranking() {
       isSoul: type === 'soul',
     }))
 
+    // Soma as bases por agrupamento e guarda a lista (basesList) que compõe
+    // o total, exibida na sanfona e na impressão.
+    const agrupar = (lista, keyFn, subFn) => {
+      const map = {}
+      lista.forEach(b => {
+        const key = keyFn(b)
+        if (!map[key]) map[key] = { id: key, nome: key, pontos: 0, bases: 0, sub: subFn(b), basesList: [] }
+        map[key].pontos += b.pontos
+        map[key].bases++
+        map[key].basesList.push(b)
+      })
+      return Object.values(map)
+        .map(r => {
+          const pontos = Math.round(r.pontos * 10) / 10
+          return { ...r, pontos, tier: getTier(pontos, type === 'soul'), isSoul: type === 'soul', extra: `${r.bases} ${r.bases === 1 ? 'base' : 'bases'}` }
+        })
+        .sort((a, b) => b.pontos - a.pontos)
+    }
+
     if (nivel === 'regional' && filtroRegiao) {
       items = items.filter(b => b.regiao_id === filtroRegiao)
     } else if (nivel === 'regional') {
-      const map = {}
-      scoresPorBase.forEach(b => {
-        const key = b.regiao || '(sem região)'
-        if (!map[key]) map[key] = { id: key, nome: key, pontos: 0, bases: 0, sub: null, extra: null }
-        map[key].pontos += b.pontos
-        map[key].bases++
-      })
-      items = Object.values(map)
-        .sort((a, b) => b.pontos - a.pontos)
-        .map(r => ({ ...r, tier: getTier(r.pontos, type === 'soul'), isSoul: type === 'soul', extra: `${r.bases} ${r.bases === 1 ? 'base' : 'bases'}` }))
+      items = agrupar(items, b => b.regiao || '(sem região)', () => null)
     } else if (nivel === 'distrital') {
-      const map = {}
-      scoresPorBase
-        .filter(b => !filtroRegiao || b.regiao_id === filtroRegiao)
-        .forEach(b => {
-          const key = b.distrito || '(sem distrito)'
-          if (!map[key]) map[key] = { id: key, nome: key, pontos: 0, bases: 0, sub: b.regiao, extra: null }
-          map[key].pontos += b.pontos
-          map[key].bases++
-        })
-      items = Object.values(map)
-        .sort((a, b) => b.pontos - a.pontos)
-        .map(r => ({ ...r, tier: getTier(r.pontos, type === 'soul'), isSoul: type === 'soul', extra: `${r.bases} ${r.bases === 1 ? 'base' : 'bases'}` }))
+      items = agrupar(
+        items.filter(b => !filtroRegiao || b.regiao_id === filtroRegiao),
+        b => b.distrito || '(sem distrito)',
+        b => b.regiao,
+      )
     } else if (nivel === 'igreja') {
-      const map = {}
-      scoresPorBase
-        .filter(b => !filtroRegiao   || b.regiao_id   === filtroRegiao)
-        .filter(b => !filtroDistrito || b.distrito_id === filtroDistrito)
-        .forEach(b => {
-          const key = b.igreja || '(sem igreja)'
-          if (!map[key]) map[key] = { id: key, nome: key, pontos: 0, bases: 0, sub: [b.distrito, b.regiao].filter(Boolean).join(' · '), extra: null }
-          map[key].pontos += b.pontos
-          map[key].bases++
-        })
-      items = Object.values(map)
-        .sort((a, b) => b.pontos - a.pontos)
-        .map(r => ({ ...r, tier: getTier(r.pontos, type === 'soul'), isSoul: type === 'soul', extra: `${r.bases} ${r.bases === 1 ? 'base' : 'bases'}` }))
+      items = agrupar(
+        items
+          .filter(b => !filtroRegiao   || b.regiao_id   === filtroRegiao)
+          .filter(b => !filtroDistrito || b.distrito_id === filtroDistrito),
+        b => b.igreja || '(sem igreja)',
+        b => [b.distrito, b.regiao].filter(Boolean).join(' · '),
+      )
     } else if (nivel === 'base') {
       if (filtroRegiao)   items = items.filter(b => b.regiao_id   === filtroRegiao)
       if (filtroDistrito) items = items.filter(b => b.distrito_id === filtroDistrito)
@@ -1090,7 +1269,7 @@ export default function Ranking() {
     }
 
     return items
-  }, [scoresPorBase, nivel, filtroRegiao, filtroDistrito, filtroIgreja])
+  }, [scoresPorBase, nivel, filtroRegiao, filtroDistrito, filtroIgreja, type])
 
   const scoreBaseDetalhada = useMemo(() =>
     scoresPorBase.find(base => String(base.id) === String(reportBaseId)) ?? null,
@@ -1159,6 +1338,27 @@ export default function Ranking() {
   const showGeoFilters = ['regional', 'distrital', 'igreja', 'base'].includes(nivel)
   const showBaseFilter = view === 'alunos' && nivel === 'base'
 
+  // Cabeçalho da impressão: descreve exatamente o recorte que está na tela
+  const nomePorId = (lista, idKeys, nomeKeys, id) => {
+    const item = lista.find(x => idKeys.some(k => String(x[k] ?? '') === String(id)))
+    return item ? (nomeKeys.map(k => item[k]).find(Boolean) ?? id) : id
+  }
+  const filtrosDescricao = [
+    `Visão: ${view === 'alunos' ? 'Alunos' : 'Bases'}`,
+    `Nível: ${nomeNivel}`,
+    filtroRegiao   && `Região: ${nomePorId(regioes,   ['id_regiao', 'id'],    ['Regiao', 'nome'],    filtroRegiao)}`,
+    filtroDistrito && `Distrito: ${nomePorId(distritos, ['id_distritos', 'id'], ['Distritos', 'nome'], filtroDistrito)}`,
+    filtroIgreja   && `Igreja: ${nomePorId(igrejas,   ['id_igrejas', 'id'],   ['Igrejas', 'nome'],   filtroIgreja)}`,
+    showBaseFilter && filtroBase && `Base: ${nomePorId(basesFiltradas, ['id_base', 'id'], ['Base', 'nome'], filtroBase)}`,
+    view === 'bases' && `Faixa: ${tierFilter}`,
+    view === 'bases' && `Ordenação: ${ordemEfetiva === 'pontuacao' ? 'por pontuação' : 'alfabética'}`,
+  ].filter(Boolean).join(' · ')
+  const colunaNomePrint = view === 'alunos' ? 'Aluno'
+    : nivel === 'regional' && !filtroRegiao ? 'Região'
+    : nivel === 'distrital' ? 'Distrito'
+    : nivel === 'igreja' ? 'Igreja'
+    : 'Base'
+
   if (reportBaseId && !isAdmin) return <Navigate to="/admin/login" replace />
 
   if (reportBaseId) {
@@ -1182,6 +1382,18 @@ export default function Ranking() {
 
   return (
     <div>
+      {isAdmin && !isLoading && listAtual.length > 0 && (
+        <RankingPrint
+          view={view}
+          items={listAtual}
+          tierFilter={tierFilter}
+          ordem={ordemEfetiva}
+          titulo={`🏆 Ranking ${currentTipo} — ${ano}`}
+          filtrosDescricao={filtrosDescricao}
+          colunaNome={colunaNomePrint}
+        />
+      )}
+      <div className="ranking-screen">
       {/* ── Header ── */}
       <div className="card section" style={{
         background: 'linear-gradient(135deg,rgba(124,58,237,.15) 0%,rgba(251,113,133,.1) 100%)',
@@ -1189,11 +1401,24 @@ export default function Ranking() {
       }}>
         <div className="card-header" style={{ marginBottom: 14 }}>
           <div className="card-title" style={{ fontSize: 22 }}>🏆 Ranking {currentTipo}</div>
-          <select value={ano} onChange={e => setAno(Number(e.target.value))} style={{ width: 92 }}>
-            {[anoAtual() - 1, anoAtual(), anoAtual() + 1].map(a => (
-              <option key={a} value={a}>{a}</option>
-            ))}
-          </select>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {isAdmin && (
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => window.print()}
+                disabled={isLoading || listAtual.length === 0}
+                title="Imprime o ranking com os filtros, faixa e ordenação atuais"
+              >
+                🖨️ Imprimir
+              </button>
+            )}
+            <select value={ano} onChange={e => setAno(Number(e.target.value))} style={{ width: 92 }}>
+              {[anoAtual() - 1, anoAtual(), anoAtual() + 1].map(a => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* View: Bases / Alunos */}
@@ -1385,9 +1610,18 @@ export default function Ranking() {
           
           {/* Layout em 4 colunas para ranking de bases */}
           {view === 'bases' ? (
-            <BaseRankingByTiers items={listAtual} showPoints={canSeePoints} labelPts={labelPts} isAdmin={isAdmin} onSelect={isAdmin ? (id) => {
-              navigate(`/${type || 'teen'}/ranking?relatorio=base&base=${encodeURIComponent(id)}&ano=${ano}`)
-            } : undefined} />
+            <BaseRankingByTiers
+              items={listAtual}
+              showPoints={canSeePoints}
+              isAdmin={isAdmin}
+              tierFilter={tierFilter}
+              onTierFilterChange={setTierFilter}
+              ordem={ordemEfetiva}
+              onOrdemChange={isAdmin ? setOrdemBases : undefined}
+              onSelect={isAdmin ? (id) => {
+                navigate(`/${type || 'teen'}/ranking?relatorio=base&base=${encodeURIComponent(id)}&ano=${ano}`)
+              } : undefined}
+            />
           ) : (
             <>
               {top3.length > 0 && (
@@ -1400,6 +1634,7 @@ export default function Ranking() {
           )}
         </div>
       )}
+      </div>
     </div>
   )
 }

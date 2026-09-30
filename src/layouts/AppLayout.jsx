@@ -37,6 +37,7 @@ const NAV_TEEN = [
 
 const NAV_ADMIN = [
   { to: '/admin/departamentos', icon: '🧭', label: 'Departamentos' },
+  { to: '/admin/validacao', icon: '🔎', label: 'Validação de Lançamentos' },
   { to: '/admin/config', icon: '⚙️', label: 'Configurações Gerais' },
 ]
 
@@ -45,6 +46,7 @@ const PAGE_TITLES = {
   '/': { icon: '🏠', title: 'Dashboard' },
   '/relatorios': { icon: '📊', title: 'Relatório Geral' },
   '/admin/departamentos': { icon: '🧭', title: 'Departamentos do Discipulado' },
+  '/admin/validacao': { icon: '🔎', title: 'Validação de Lançamentos' },
   '/admin/config': { icon: '⚙️', title: 'Configurações Admin' },
 }
 

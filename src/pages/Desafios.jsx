@@ -6,6 +6,7 @@ import { useTable } from '../hooks/useTable'
 import { useAuthStore } from '../store/authStore'
 import { db } from '../api/db'
 import { gerarSabados, divisorCadencia } from '../lib/desafiosPontuacao'
+import { isDesafioDiscipulado } from '../lib/discipuladoMeta'
 
 function fmtDataCurta(iso) {
   if (!iso) return ''
@@ -845,7 +846,8 @@ export default function Desafios() {
                               key={`${d.id}-anual`}
                               desafio={d}
                               marco={getMarco(d.id, null)}
-                              isLocked={false}
+                              isLocked={isDesafioDiscipulado(d)}
+                              lockedMsg={isDesafioDiscipulado(d) ? '🔒 Automático: marcado pelo sistema conforme os cartões da aba Discípulos' : null}
                               onSalvar={({ realizado, data_realizacao, obs }) =>
                                 salvarMarco.mutateAsync({
                                   base_id: baseId, desafio_id: d.id,
@@ -1023,7 +1025,7 @@ function TrPontualMensal({ desafio, marcos, ano, canEdit, onToggle }) {
 }
 
 // ── Sub-componente: linha de desafio pontual ─────────────────────
-function TrPontual({ desafio, marco, isLocked, onSalvar }) {
+function TrPontual({ desafio, marco, isLocked, lockedMsg = null, onSalvar }) {
   const [local, setLocal] = useState({
     realizado:       marco?.realizado       ?? false,
     data_realizacao: marco?.data_realizacao ?? '',
@@ -1065,6 +1067,7 @@ function TrPontual({ desafio, marco, isLocked, onSalvar }) {
                 {desafio.descricao}
               </div>
             )}
+            {lockedMsg && <div style={{ fontSize: 11, marginTop: 3, color: 'var(--c2)', fontWeight: 600 }}>{lockedMsg}</div>}
           </div>
         </div>
       </td>
@@ -1248,6 +1251,24 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
     }))
   }
 
+  // Recalcula a meta de discipulado da base e marca/desmarca o desafio anual
+  // automaticamente (regra em lib/discipuladoMeta.js)
+  async function syncDiscipulado() {
+    if (!baseId || !ano) return
+    try {
+      const r = await db.syncDiscipuladoDesafio(baseId, ano)
+      if (r?.alterado) {
+        toast(r.realizado
+          ? `🎯 Meta de discipulado atingida (${r.avaliacao.alunosComCartao}/${r.avaliacao.metaAlunos}) — desafio marcado automaticamente.`
+          : `Meta de discipulado abaixo do mínimo (${r.avaliacao.alunosComCartao}/${r.avaliacao.metaAlunos}) — desafio desmarcado automaticamente.`)
+      }
+      qc.invalidateQueries({ queryKey: ['desafios_marcos', baseId, ano] })
+      qc.invalidateQueries({ queryKey: ['ranking_marcos', ano] })
+    } catch {
+      // sync não-crítico: falha silenciosa (o relatório de validação aponta divergências)
+    }
+  }
+
   // Salva rascunho: cria no DB pela primeira vez
   const saveDraftCartao = useMutation({
     mutationFn: ({ membroId, draft }) => db.createDiscipulosCartao({
@@ -1270,6 +1291,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
         [membroId]: (prev[membroId] || []).filter(d => d._draftId !== draft._draftId),
       }))
       toast.success('Cartão salvo com sucesso!')
+      syncDiscipulado()
     },
     onError: (e) => toast.error('Erro ao salvar cartão: ' + e.message),
   })
@@ -1298,6 +1320,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes', baseId, ano, tipo] })
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes_notas'] })
       toast.success('Cartão atualizado com sucesso!')
+      syncDiscipulado()
     },
     onError: (e) => toast.error('Erro ao atualizar cartão: ' + e.message),
   })
@@ -1308,6 +1331,7 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes', baseId, ano, tipo] })
       qc.invalidateQueries({ queryKey: ['discipulos_cartoes_notas'] })
       toast.success('Cartão excluído.')
+      syncDiscipulado()
     },
     onError: (e) => toast.error('Erro ao excluir cartão: ' + e.message),
   })

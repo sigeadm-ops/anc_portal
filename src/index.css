@@ -133,6 +133,34 @@ body {
   color: var(--c1);
 }
 
+/* Ranking: versão de impressão fica oculta na tela e substitui a tela no papel */
+.ranking-print { display: none; }
+@media print {
+  .ranking-screen { display: none !important; }
+  .ranking-print { display: block !important; }
+  .ranking-print-faixa { break-inside: auto; page-break-inside: auto; }
+  .ranking-print-faixa h2 { break-after: avoid; page-break-after: avoid; }
+  .ranking-print thead { display: table-header-group; }
+  .ranking-print tr { break-inside: avoid; page-break-inside: avoid; }
+}
+
+/* Validação de Lançamentos: contagem de alunos ao lado do nome da base */
+.validacao-contagem { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; font-size: 12px; }
+.validacao-contagem span {
+  padding: 3px 9px;
+  border-radius: 12px;
+  border: 1px solid var(--report-line, var(--line));
+  background: color-mix(in srgb, var(--report-pastel, transparent) 60%, white);
+  white-space: nowrap;
+}
+
+/* Validação de Lançamentos: bases seguidas na impressão (sem quebra forçada por base) */
+@media print {
+  .validacao-shell { max-width: none; padding: 0; }
+  .validacao-base { page-break-after: auto !important; break-after: auto !important; margin: 0 0 14px !important; }
+  .validacao-base a { text-decoration: none; }
+}
+
 .report-print-button {
   color: #fff !important;
   font-weight: 800;
