@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useAuthStore } from '../store/authStore'
-import { gerarSabados, divisorCadencia, contarMesesDistintos, isProvaBonus, isProvaTitulo } from '../lib/desafiosPontuacao'
+import { gerarSabados, divisorCadencia, isProvaBonus, isProvaTitulo, provasPrevistas, descartarNotasDuplicadas } from '../lib/desafiosPontuacao'
 
 function anoAtual() { return new Date().getFullYear() }
 
@@ -693,6 +693,7 @@ export default function Ranking() {
   const { data: regioes = [] }   = useTable('Regiao')
   const { data: distritos = [] } = useTable('Distritos')
   const { data: igrejas = [] }   = useTable('Igrejas')
+  const { data: provas = [] }    = useTable('Provas')
 
   const { data: catalogo = [] } = useQuery({
     queryKey: ['desafios_catalogo', currentTipo],
@@ -1083,13 +1084,12 @@ export default function Ranking() {
 
   // Ranking individual de alunos:
   // pontos = soma das médias trimestrais do aluno. Cada trimestre pontua
-  // (soma das notas regulares do trimestre ÷ nº de provas esperadas naquele
+  // (soma das notas regulares do trimestre ÷ nº de provas PREVISTAS naquele
   // trimestre) + soma das provas bônus (somadas direto, fora da divisão).
-  // O nº de provas esperadas é fixo por trimestre — nº de sábados (G148 Teen,
-  // ~13, uma prova por semana) ou nº de meses (Soul+, ~3, uma prova por mês) —
-  // e não pelo nº de provas que o aluno realmente fez. Isso evita que o Soul+
-  // (cadência mensal) fique artificialmente em desvantagem frente ao G148
-  // (cadência semanal) só por ter menos oportunidades de prova no calendário.
+  // O nº de provas previstas é fixo por trimestre — sábados de referência no
+  // G148 Teen (ex.: 6/13/13/13) ou provas programadas no Soul+ (ex.: 1/3/3/3)
+  // — e não o nº de provas que o aluno realmente fez: prova não feita conta
+  // como zero.
   const rankingAlunos = useMemo(() => {
     const isSoul = currentTipo === 'Soul+'
     const divisorPorTrimestre = {}
@@ -1100,23 +1100,33 @@ export default function Ranking() {
     const getDivisor = (tc) => {
       const key = tc ? `${tc.ano}-${tc.trimestre}` : 'sem-trimestre'
       if (divisorPorTrimestre[key] != null) return divisorPorTrimestre[key]
-      const sabadosTc = tc ? gerarSabados(tc.primeiro_sabado, tc.ultimo_sabado) : []
       const divisor = tc
-        ? (isSoul ? contarMesesDistintos(sabadosTc) : sabadosTc.length) || 1
+        ? provasPrevistas({ tipo: currentTipo, inicio: tc.primeiro_sabado, fim: tc.ultimo_sabado, trimestresConfig, provas }) || 1
         : (isSoul ? 3 : 13) // fallback p/ notas fora de qualquer trimestre configurado
       divisorPorTrimestre[key] = divisor
       return divisor
     }
 
+    // Lançamento duplicado (mesmo aluno + mesma prova) não conta em dobro:
+    // só o mais recente entra na soma.
+    const notasValidas = descartarNotasDuplicadas(
+      todasNotas.filter(r => {
+        if (!Number.isFinite(Number(r.nota ?? r.Nota))) return false
+        // No Soul+, só "NN Prova Soul+" tem nota de verdade — "Registro Semanal"
+        // (Comunhão/Verso/Discipulado/300, sem nota) não conta pra média.
+        if (isSoul && !isProvaTitulo(r.titulo ?? r.Titulo)) return false
+        return Boolean((r.Membros ?? r.nome_aluno ?? '').trim())
+      }),
+      {
+        keyOf: r => (r.id_membros && r.id_provas) ? `${r.id_membros}|${r.id_provas}` : null,
+        ordemOf: r => r.lancado_em,
+      }
+    )
+
     const map = {}
-    todasNotas.forEach(r => {
+    notasValidas.forEach(r => {
       const nota = Number(r.nota ?? r.Nota)
-      if (!Number.isFinite(nota)) return
-      // No Soul+, só "NN Prova Soul+" tem nota de verdade — "Registro Semanal"
-      // (Comunhão/Verso/Discipulado/300, sem nota) não conta pra média.
-      if (isSoul && !isProvaTitulo(r.titulo ?? r.Titulo)) return
       const nome = r.Membros ?? r.nome_aluno ?? ''
-      if (!nome.trim()) return
       const rowBaseId = String(r.id_base ?? '').trim()
       const studentKey = r.id_membros ?? (rowBaseId + '|' + nome)
       if (!map[studentKey]) {
@@ -1168,7 +1178,7 @@ export default function Ranking() {
         }
       })
       .sort((a, b) => (b.pontos - a.pontos) || a.nome.localeCompare(b.nome))
-  }, [todasNotas, trimestresConfig, currentTipo, basePorAluno])
+  }, [todasNotas, trimestresConfig, provas, currentTipo, basePorAluno])
 
   // Número de bases G148 por igreja
   const basesPerIgreja = useMemo(() => {
@@ -1522,7 +1532,7 @@ export default function Ranking() {
         )}
         {view === 'alunos' && (
           <div style={{ marginTop: 10, fontSize: 11, opacity: 0.5 }}>
-            💡 Pontuação = soma das médias trimestrais (notas ÷ provas esperadas no trimestre) + provas bônus
+            💡 Pontuação = soma das médias trimestrais (notas ÷ provas previstas no trimestre) + provas bônus
           </div>
         )}
       </div>

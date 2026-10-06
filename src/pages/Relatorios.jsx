@@ -5,7 +5,7 @@ import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { db } from '../api/db'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
-import { isProvaTitulo } from '../lib/desafiosPontuacao'
+import { isProvaBonus, isProvaTitulo, provasPrevistas, descartarNotasDuplicadas } from '../lib/desafiosPontuacao'
 import { marcarDuplicados, corDuplicidade } from '../utils/duplicidade'
 
 function gerarSabados(primeiro, ultimo) {
@@ -22,6 +22,12 @@ function gerarSabados(primeiro, ultimo) {
 
 function anoAtual() { return new Date().getFullYear() }
 
+// Retorna os 3 meses (1-12) de um trimestre
+function mesesDoTrimestre(trim) {
+  const base = (trim - 1) * 3 + 1
+  return [base, base + 1, base + 2]
+}
+
 function toIsoDate(v) {
   if (!v) return ''
   const s = String(v).trim()
@@ -30,19 +36,6 @@ function toIsoDate(v) {
   const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
   if (br) return `${br[3]}-${br[2]}-${br[1]}`
   return ''
-}
-
-function monthKey(iso) {
-  return iso ? iso.slice(0, 7) : ''
-}
-
-function quarterFromIso(iso) {
-  if (!iso) return ''
-  const year = Number(iso.slice(0, 4))
-  const month = Number(iso.slice(5, 7))
-  if (!year || !month) return ''
-  const q = Math.ceil(month / 3)
-  return `${year}-T${q}`
 }
 
 function labelMonth(key) {
@@ -725,26 +718,47 @@ function DesempenhoTab() {
     return mesesTrimestreAtivo.has(mes)
   }
 
+  // Média de cada aluno = soma das notas regulares do período (bônus conta à
+  // parte, fica fora da média) ÷ nº de provas previstas no período (sábados de
+  // referência) — não pelo nº de notas lançadas. A nota da base é a média
+  // dessas médias entre os alunos com nota.
   const notasMediaPorBase = useMemo(() => {
+    let inicio = `${ano}-01-01`
+    let fim = `${ano}-12-31`
+    if (trimestre && trimestreConfigAtivo?.primeiro_sabado && trimestreConfigAtivo?.ultimo_sabado) {
+      inicio = trimestreConfigAtivo.primeiro_sabado
+      fim = trimestreConfigAtivo.ultimo_sabado
+    } else if (trimestre) {
+      const mesFim = Number(trimestre) * 3
+      inicio = `${ano}-${String(mesFim - 2).padStart(2, '0')}-01`
+      fim = `${ano}-${String(mesFim).padStart(2, '0')}-${new Date(ano, mesFim, 0).getDate()}`
+    }
+    const divisor = provasPrevistas({ tipo: 'G148 Teen', inicio, fim, trimestresConfig })
+
+    const notasValidas = descartarNotasDuplicadas(todasNotas, {
+      keyOf: r => (r.id_membros && r.id_provas) ? `${r.id_membros}|${r.id_provas}` : null,
+      ordemOf: r => r.lancado_em,
+    })
+
     const map = {}
-    todasNotas.forEach(r => {
+    notasValidas.forEach(r => {
       const baseId = r.id_base
       const nota = Number(r.nota ?? r.Nota)
       const nome = r.Membros ?? r.nome_aluno ?? ''
       if (!baseId || !Number.isFinite(nota) || !nome.trim()) return
+      if (isProvaBonus(r.titulo ?? r.Titulo)) return
       if (!rowIsInsideSelectedQuarter(r.data ?? r.Data)) return
       const key = r.id_membros ?? (baseId + '|' + nome)
       if (!map[baseId]) map[baseId] = {}
-      if (!map[baseId][key]) map[baseId][key] = { sum: 0, count: 0 }
-      map[baseId][key].sum += nota; map[baseId][key].count++
+      map[baseId][key] = (map[baseId][key] ?? 0) + nota
     })
     const result = {}
     Object.entries(map).forEach(([baseId, students]) => {
-      const avgs = Object.values(students).map(s => s.sum / s.count)
+      const avgs = Object.values(students).map(soma => (divisor > 0 ? soma / divisor : 0))
       result[baseId] = avgs.length > 0 ? avgs.reduce((a, b) => a + b, 0) / avgs.length : 0
     })
     return result
-  }, [todasNotas, trimestre, trimestreConfigAtivo, mesesTrimestreAtivo])
+  }, [todasNotas, ano, trimestre, trimestreConfigAtivo, mesesTrimestreAtivo, trimestresConfig])
 
   // Pontos de discípulos por base:
   // — só o primeiro cartão (ordem = 1) de cada membro conta
@@ -1268,9 +1282,30 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
   // Discipulado/300) — só "NN Prova Soul+" deve entrar nas médias de nota.
   // A lista bruta (`historico`) continua mostrando tudo, pra manter o extrato
   // de auditoria completo.
-  const historicoNotas = useMemo(() => (
-    historico.filter(r => r.tipo !== 'Soul+' || isProvaTitulo(r.prova))
+  // Lançamento duplicado (mesmo aluno + mesma prova) também fica fora da
+  // média — só o mais recente conta —, senão inflaria a soma.
+  const historicoValido = useMemo(() => (
+    descartarNotasDuplicadas(
+      historico.filter(r => r.tipo !== 'Soul+' || isProvaTitulo(r.prova)),
+      {
+        keyOf: r => (r.id_membros && r.id_provas) ? `${r.id_membros}|${r.id_provas}` : null,
+        ordemOf: r => r.lancadoEm || r.dataIso,
+      }
+    )
   ), [historico])
+
+  // Prova bônus conta à parte: não entra na média, é exibida em separado.
+  const historicoNotas = useMemo(() => (
+    historicoValido.filter(r => !isProvaBonus(r.prova))
+  ), [historicoValido])
+
+  const bonusAno = useMemo(() => (
+    historicoValido
+      .filter(r => isProvaBonus(r.prova) && r.dataIso.startsWith(`${anoRef}-`))
+      .reduce((s, r) => s + r.nota, 0)
+  ), [historicoValido, anoRef])
+
+  const { data: provas } = useTable('Provas')
 
   const { data: configTrimestresAno = [] } = useQuery({
     queryKey: ['configuracao_trimestres_individual', anoRef],
@@ -1278,74 +1313,88 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
     enabled: Boolean(anoRef),
   })
 
-  const porMes = useMemo(() => {
-    const map = {}
-    historicoNotas.forEach(r => {
-      const k = monthKey(r.dataIso)
-      if (!k) return
-      if (!map[k]) map[k] = { soma: 0, qtd: 0 }
-      map[k].soma += r.nota
-      map[k].qtd += 1
-    })
+  // Média de um período = soma das notas regulares do aluno no período
+  // (bônus fica de fora) ÷ nº de provas PREVISTAS para o período — e não pelo
+  // nº de notas lançadas. Sem aluno selecionado (visão de grupo), é a média
+  // dessas médias individuais entre os alunos com nota no período.
+  const resumoPeriodo = useMemo(() => {
+    const cfg = Array.isArray(configTrimestresAno) ? configTrimestresAno : []
+    const divisores = new Map()
+    const divisorDe = (tipoRow, inicio, fim) => {
+      const chave = `${tipoRow}|${inicio}|${fim}`
+      if (!divisores.has(chave)) {
+        divisores.set(chave, provasPrevistas({ tipo: tipoRow, inicio, fim, trimestresConfig: cfg, provas }))
+      }
+      return divisores.get(chave)
+    }
 
+    return (inicio, fim) => {
+      const porAluno = {}
+      let qtd = 0
+      historicoNotas.forEach(r => {
+        if (r.dataIso < inicio || r.dataIso > fim) return
+        const chave = `${r.tipo}|${r.id_membros || r.aluno}`
+        if (!porAluno[chave]) porAluno[chave] = { tipo: r.tipo, soma: 0 }
+        porAluno[chave].soma += r.nota
+        qtd += 1
+      })
+      const alunos = Object.values(porAluno)
+      const medias = alunos.map(a => {
+        const divisor = divisorDe(a.tipo, inicio, fim)
+        return divisor > 0 ? a.soma / divisor : 0
+      })
+      const tipoRef = alunos[0]?.tipo || tipo || 'G148 Teen'
+      return {
+        media: medias.length ? medias.reduce((s, m) => s + m, 0) / medias.length : 0,
+        qtd,
+        previstas: divisorDe(tipoRef, inicio, fim),
+      }
+    }
+  }, [historicoNotas, configTrimestresAno, provas, tipo])
+
+  const porMes = useMemo(() => {
     return Array.from({ length: 12 }, (_, i) => {
       const month = String(i + 1).padStart(2, '0')
       const key = `${anoRef}-${month}`
-      const found = map[key] || { soma: 0, qtd: 0 }
+      const ultimoDia = new Date(Number(anoRef), i + 1, 0).getDate()
       return {
         key,
         label: labelMonth(key),
-        media: found.qtd ? found.soma / found.qtd : 0,
-        qtd: found.qtd,
+        ...resumoPeriodo(`${key}-01`, `${key}-${ultimoDia}`),
       }
     })
-  }, [historicoNotas, anoRef])
+  }, [resumoPeriodo, anoRef])
 
+  // Usa o período configurado de cada trimestre (primeiro/último sábado);
+  // sem configuração, cai no trimestre do calendário.
   const porTrimestre = useMemo(() => {
-    const map = {}
-    historicoNotas.forEach(r => {
-      const k = quarterFromIso(r.dataIso)
-      if (!k) return
-      if (!map[k]) map[k] = { soma: 0, qtd: 0 }
-      map[k].soma += r.nota
-      map[k].qtd += 1
-    })
-
+    const cfg = Array.isArray(configTrimestresAno) ? configTrimestresAno : []
     return Array.from({ length: 4 }, (_, i) => {
       const quarter = i + 1
       const key = `${anoRef}-T${quarter}`
-      const found = map[key] || { soma: 0, qtd: 0 }
+      const tc = cfg.find(t => Number(t.trimestre) === quarter)
+      const mesFim = quarter * 3
+      const inicio = tc?.primeiro_sabado || `${anoRef}-${String(mesFim - 2).padStart(2, '0')}-01`
+      const fim = tc?.ultimo_sabado || `${anoRef}-${String(mesFim).padStart(2, '0')}-${new Date(Number(anoRef), mesFim, 0).getDate()}`
       return {
         key,
         label: labelQuarter(key),
-        media: found.qtd ? found.soma / found.qtd : 0,
-        qtd: found.qtd,
+        ...resumoPeriodo(inicio, fim),
       }
     })
-  }, [historicoNotas, anoRef])
+  }, [resumoPeriodo, configTrimestresAno, anoRef])
 
   const porAno = useMemo(() => {
-    const map = {}
-    historicoNotas.forEach(r => {
-      const y = r.dataIso.slice(0, 4)
-      if (!map[y]) map[y] = { soma: 0, qtd: 0 }
-      map[y].soma += r.nota
-      map[y].qtd += 1
-    })
-    return Object.entries(map)
-      .map(([k, v]) => ({ key: k, label: k, media: v.qtd ? v.soma / v.qtd : 0, qtd: v.qtd }))
-      .sort((a, b) => a.key.localeCompare(b.key))
-  }, [historicoNotas])
+    const anos = [...new Set(historicoNotas.map(r => r.dataIso.slice(0, 4)))].sort()
+    return anos.map(y => ({ key: y, label: y, ...resumoPeriodo(`${y}-01-01`, `${y}-12-31`) }))
+  }, [historicoNotas, resumoPeriodo])
 
+  // Média geral = média anual do ano de referência (soma ÷ provas previstas no ano).
   const mediaGeral = useMemo(() => {
-    if (!historicoNotas.length) return 0
-    return historicoNotas.reduce((s, r) => s + r.nota, 0) / historicoNotas.length
-  }, [historicoNotas])
+    return porAno.find(a => a.key === anoRef)?.media ?? 0
+  }, [porAno, anoRef])
 
-  const mediaAnualRef = useMemo(() => {
-    const anoSelecionado = porAno.find(a => a.key === anoRef)
-    return anoSelecionado ? clampNota(anoSelecionado.media) : clampNota(mediaGeral)
-  }, [porAno, anoRef, mediaGeral])
+  const mediaAnualRef = useMemo(() => clampNota(mediaGeral), [mediaGeral])
 
   const notaMilStats = useMemo(() => {
     const trimestresCfg = Array.isArray(configTrimestresAno) ? configTrimestresAno : []
@@ -1413,9 +1462,9 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
 
   function exportarConsolidado() {
     const linhas = [
-      ...porMes.map(r => ({ Periodo: 'Mes', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd })),
-      ...porTrimestre.map(r => ({ Periodo: 'Trimestre', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd })),
-      ...porAno.map(r => ({ Periodo: 'Ano', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd })),
+      ...porMes.map(r => ({ Periodo: 'Mes', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd, Provas_Previstas: r.previstas })),
+      ...porTrimestre.map(r => ({ Periodo: 'Trimestre', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd, Provas_Previstas: r.previstas })),
+      ...porAno.map(r => ({ Periodo: 'Ano', Referencia: r.label, Media: Number(r.media).toFixed(2), Lancamentos: r.qtd, Provas_Previstas: r.previstas })),
     ]
     if (!linhas.length) return
     downloadCSV(linhas, 'historico_individual_resumo')
@@ -1788,6 +1837,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
             <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(5,minmax(120px,1fr))', flex: 1 }}>
               <div className="stat-card c1"><div className="stat-num">{historico.length}</div><div className="stat-label">Lançamentos</div></div>
               <div className="stat-card c1"><div className="stat-num">{mediaGeral ? mediaGeral.toFixed(1) : '0.0'}</div><div className="stat-label">Média Geral</div></div>
+              <div className="stat-card c1"><div className="stat-num">{bonusAno}</div><div className="stat-label">Bônus (à parte da média)</div></div>
               <div className="stat-card c1"><div className="stat-num">{porMes.filter(m => m.qtd > 0).length}/{porTrimestre.filter(t => t.qtd > 0).length}</div><div className="stat-label">Meses / Trimestres</div></div>
               <div className="stat-card c1"><div className="stat-num">{notaMilStats.simAno}</div><div className="stat-label">Sábados com SIM ({notaMilStats.percentualAno.toFixed(1)}% freq.)</div></div>
             </div>

@@ -1341,7 +1341,7 @@ export const db = {
     const { data, error } = await fetchAllRows((from, to) =>
       supabase
         .from('vw_notas_teen')
-        .select('id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo')
+        .select('id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo, id_provas, lancado_em')
         .gte('data', `${ano}-01-01`)
         .lte('data', `${ano}-12-31`)
         .order('id', { ascending: true })
@@ -1358,7 +1358,7 @@ export const db = {
     const { data, error } = await fetchAllRows((from, to) =>
       supabase
         .from('vw_notas_soul')
-        .select('id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo')
+        .select('id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo, id_provas, lancado_em')
         .gte('data', `${ano}-01-01`)
         .lte('data', `${ano}-12-31`)
         .order('id', { ascending: true })

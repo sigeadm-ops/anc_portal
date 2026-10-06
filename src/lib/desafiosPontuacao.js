@@ -35,10 +35,9 @@ export function divisorCadencia(desafio, sabadosTrimestre) {
   return sabadosTrimestre.length || 1
 }
 
-// Uma prova "bônus" (ex.: "Prova Bônus - ID7 - Abril") soma seu valor
-// diretamente à média do trimestre, sem entrar na divisão pelo nº de
-// provas esperadas — não deve puxar a média pra baixo por não ser uma
-// prova regular do calendário.
+// Uma prova "bônus" (ex.: "Prova Bônus - ID7 - Abril") não é uma prova
+// regular do calendário: conta À PARTE — a nota não entra na média (nem na
+// soma, nem no nº de provas previstas) e é somada por fora onde há pontuação.
 export function isProvaBonus(titulo) {
   const t = String(titulo ?? '')
   return /b[ôo]nus/i.test(t) || /\bid\s*\d+\b/i.test(t)
@@ -49,4 +48,66 @@ export function isProvaBonus(titulo) {
 // 1x/mês). Só o segundo tipo conta pra média de notas do aluno.
 export function isProvaTitulo(titulo) {
   return /prova/i.test(String(titulo ?? ''))
+}
+
+// ── Média de notas ──────────────────────────────────────────────
+// Regra: média = soma das notas das provas regulares do aluno no período
+// (bônus fica de fora, conta à parte) ÷ nº de provas PREVISTAS para o período
+// — e não pelo nº de notas que o aluno tem lançadas. Prova não feita conta
+// como zero.
+
+const isTipoSoul = (tipo) => /soul/i.test(String(tipo ?? ''))
+
+// Sábados de referência do período [inicio, fim] (ISO). Havendo trimestres
+// configurados para o(s) ano(s) do período, só contam os sábados dentro de
+// algum trimestre (ex.: 2026 = 6 + 13 + 13 + 13 = 45).
+function sabadosDeReferencia(inicio, fim, trimestresConfig) {
+  if (!inicio || !fim || inicio > fim) return []
+  const sabados = gerarSabados(inicio, fim)
+  const cfgs = (trimestresConfig ?? []).filter((tc) =>
+    tc.primeiro_sabado && tc.ultimo_sabado &&
+    String(tc.primeiro_sabado).slice(0, 4) <= fim.slice(0, 4) &&
+    String(tc.ultimo_sabado).slice(0, 4) >= inicio.slice(0, 4)
+  )
+  if (!cfgs.length) return sabados
+  return sabados.filter((s) => cfgs.some((tc) => s >= tc.primeiro_sabado && s <= tc.ultimo_sabado))
+}
+
+// Nº de provas previstas (divisor da média) no período [inicio, fim]:
+// - G148 Teen: uma prova por sábado de referência.
+// - Soul+: só os sábados com "NN Prova Soul+" programada no cadastro de
+//   Provas (ex.: 11 no ano de 2026). Sem cadastro carregado, cai no nº de
+//   meses do período (1 prova/mês).
+export function provasPrevistas({ tipo, inicio, fim, trimestresConfig = [], provas = [] }) {
+  if (!inicio || !fim || inicio > fim) return 0
+  if (!isTipoSoul(tipo)) return sabadosDeReferencia(inicio, fim, trimestresConfig).length
+
+  const datasProvaSoul = (provas ?? [])
+    .filter((p) => {
+      const nome = p.Provas ?? p.nome
+      return isTipoSoul(p.Tipo ?? p.tipo) && isProvaTitulo(nome) && !isProvaBonus(nome)
+    })
+    .map((p) => String(p.Data ?? p.data ?? '').slice(0, 10))
+    .filter(Boolean)
+  if (!datasProvaSoul.length) {
+    return contarMesesDistintos(sabadosDeReferencia(inicio, fim, trimestresConfig))
+  }
+  return new Set(datasProvaSoul.filter((d) => d >= inicio && d <= fim)).size
+}
+
+// Como a média passa a ser soma ÷ divisor fixo, um lançamento duplicado
+// (mesmo aluno + mesma prova) inflaria a soma. Mantém só o mais recente de
+// cada chave; linhas sem chave (keyOf → null) são todas mantidas.
+export function descartarNotasDuplicadas(rows, { keyOf, ordemOf }) {
+  const maisRecente = new Map()
+  rows.forEach((row) => {
+    const chave = keyOf(row)
+    if (!chave) return
+    const atual = maisRecente.get(chave)
+    if (!atual || String(ordemOf(row) ?? '') >= String(ordemOf(atual) ?? '')) maisRecente.set(chave, row)
+  })
+  return rows.filter((row) => {
+    const chave = keyOf(row)
+    return !chave || maisRecente.get(chave) === row
+  })
 }
