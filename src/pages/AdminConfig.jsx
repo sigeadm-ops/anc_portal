@@ -148,27 +148,41 @@ function ProvasCRUD({ filterMin }) {
   const isAdmin = useAuthStore(s => s.isAdmin)
   const { data, isLoading, insert, update, remove } = useTable('Provas')
   const [form, setForm] = useState({ tipo: filterMin || '', nome: '', data: '' })
-  const [editingId, setEditingId] = useState(null)
+  // Edição acontece em modal (não no formulário do topo) pra não perder a
+  // posição na lista ao corrigir várias provas em sequência.
+  const [editing, setEditing] = useState(null) // { id, tipo, nome, data }
 
   const canCrud = isAdmin
 
   useEffect(() => {
     setForm({ tipo: filterMin || '', nome: '', data: '' })
-    setEditingId(null)
+    setEditing(null)
   }, [filterMin])
+
+  useEffect(() => {
+    if (!editing) return
+    function onKeyDown(e) {
+      if (e.key === 'Escape' && !update.isPending) setEditing(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [editing, update.isPending])
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!form.tipo || !form.nome || !form.data) return showError('Formulário Incompleto', 'Preencha o tipo, nome e data da prova.')
-    if (editingId) {
-      await update.mutateAsync({ id: editingId, data: form })
-      toast.success('Prova atualizada!')
-      setEditingId(null)
-    } else {
-      await insert.mutateAsync(form)
-      toast.success('Prova cadastrada!')
-    }
+    await insert.mutateAsync(form)
+    toast.success('Prova cadastrada!')
     setForm({ tipo: filterMin || '', nome: '', data: '' })
+  }
+
+  async function handleUpdate(e) {
+    e.preventDefault()
+    const { id, ...dados } = editing
+    if (!dados.tipo || !dados.nome || !dados.data) return showError('Formulário Incompleto', 'Preencha o tipo, nome e data da prova.')
+    await update.mutateAsync({ id, data: dados })
+    toast.success('Prova atualizada!')
+    setEditing(null)
   }
 
   const sorted = [...(data || [])]
@@ -182,7 +196,7 @@ function ProvasCRUD({ filterMin }) {
   return (
     <div className="dimension-crud">
        <div className="card section">
-        <div className="card-header"><div className="card-title">{editingId ? '✏️ Editar Prova' : '➕ Nova Prova'}</div></div>
+        <div className="card-header"><div className="card-title">➕ Nova Prova</div></div>
         <div className="card-body">
           <form onSubmit={handleSubmit}>
             <div className="form-grid">
@@ -215,7 +229,7 @@ function ProvasCRUD({ filterMin }) {
                   <td>{fmtDataBR(p.data)}</td>
                   <td>
                     <div className="td-actions">
-                      <button className="btn-icon" onClick={() => { setForm({tipo: p.tipo, nome: p.nome, data: p.data}); setEditingId(getProvaId(p)) }} disabled={!canCrud}>✏️</button>
+                      <button className="btn-icon" onClick={() => setEditing({ id: getProvaId(p), tipo: p.tipo, nome: p.nome, data: p.data })} disabled={!canCrud}>✏️</button>
                       <button className="btn-icon danger" onClick={() => canCrud && confirm('Excluir?') && remove.mutateAsync(getProvaId(p))} disabled={!canCrud}>🗑️</button>
                     </div>
                   </td>
@@ -225,6 +239,38 @@ function ProvasCRUD({ filterMin }) {
           </table>
         </div>
       </div>
+
+      {/* ── Modal de edição ── */}
+      {editing && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && !update.isPending && setEditing(null)}>
+          <form className="modal" style={{ width: 'min(560px, 100%)' }} onSubmit={handleUpdate}>
+            <div className="modal-header">
+              <div className="modal-title">✏️ Editar Prova</div>
+              <button type="button" className="btn-icon" onClick={() => setEditing(null)} disabled={update.isPending}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Tipo</label>
+                  <select value={editing.tipo} onChange={e => setEditing(p => ({ ...p, tipo: e.target.value }))} disabled={Boolean(filterMin)}>
+                    <option value="">Selecione...</option>
+                    <option value="G148 Teen">G148 Teen</option>
+                    <option value="Soul+">Soul+</option>
+                  </select>
+                </div>
+                <div className="form-group"><label>Nome da Prova</label><input autoFocus value={editing.nome} onChange={e => setEditing(p => ({ ...p, nome: e.target.value }))} placeholder="Ex: BEP 1ª Fase" /></div>
+                <div className="form-group"><label>Data</label><input type="date" value={editing.data || ''} onChange={e => setEditing(p => ({ ...p, data: e.target.value }))} /></div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-outline" onClick={() => setEditing(null)} disabled={update.isPending}>Cancelar</button>
+              <button type="submit" className="btn btn-primary" disabled={!canCrud || update.isPending}>
+                {update.isPending ? <span className="spinner" /> : 'Salvar alterações'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
