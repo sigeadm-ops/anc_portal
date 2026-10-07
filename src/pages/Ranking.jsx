@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useAuthStore } from '../store/authStore'
+import { fmtPontos, fmtNumero } from '../utils/helpers'
 import { gerarSabados, divisorCadencia, isProvaBonus, isProvaTitulo, provasPrevistas, descartarNotasDuplicadas } from '../lib/desafiosPontuacao'
 
 function anoAtual() { return new Date().getFullYear() }
@@ -99,7 +100,7 @@ function PodiumSlot({ item, rank, showPoints, labelPts }) {
           fontWeight: 900, color: cfg.border, fontSize: rank === 1 ? 22 : 18,
           textShadow: rank === 1 && !item.isSoul ? '0 0 12px rgba(255,215,0,.4)' : 'none',
         }}>
-          {Number(item.pontos).toFixed(1)} <span style={{ fontSize: 12, opacity: 0.7 }}>{labelPts}</span>
+          {fmtPontos(item.pontos)} <span style={{ fontSize: 12, opacity: 0.7 }}>{labelPts}</span>
         </div>
       )}
       {item.tier && (
@@ -279,12 +280,12 @@ function BaseRankingByTiers({ items, showPoints, isAdmin = false, onSelect, tier
                     )}
                     {(showPoints || isAdmin) && (
                       <div style={{ marginTop: 4, textAlign: 'right', fontWeight: 800, color: tier.cor, fontSize: 12 }}>
-                        {Number(item.pontos ?? 0).toFixed(1)} pts
+                        {fmtPontos(item.pontos ?? 0)} pts
                       </div>
                     )}
                     {isAdmin && !isGrupo && Number.isFinite(Number(item.notaMedia)) && (
                       <div style={{ marginTop: 2, textAlign: 'right', fontSize: 11, opacity: 0.65 }}>
-                        notas: {Number(item.notaMedia).toFixed(1)}
+                        notas: {fmtPontos(item.notaMedia)}
                       </div>
                     )}
                   </>
@@ -331,7 +332,7 @@ function BaseRankingByTiers({ items, showPoints, isAdmin = false, onSelect, tier
                             </span>
                             {(showPoints || isAdmin) && (
                               <span style={{ fontWeight: 700, color: base.tier?.cor ?? tier.cor, flexShrink: 0 }}>
-                                {Number(base.pontos ?? 0).toFixed(1)}
+                                {fmtPontos(base.pontos ?? 0)}
                               </span>
                             )}
                           </button>
@@ -363,7 +364,7 @@ function RankingPrint({ view, items, tierFilter, ordem, titulo, filtrosDescricao
           {mostrarPosicao && <td><strong>{item.posicao}º</strong></td>}
           <td><strong>{item.nome}</strong>{item.basesList ? ` (${item.extra})` : ''}</td>
           <td>{item.sub || '—'}</td>
-          <td><strong>{Number(item.pontos).toFixed(1)}</strong></td>
+          <td><strong>{fmtPontos(item.pontos)}</strong></td>
         </tr>
       )]
       if (item.basesList) {
@@ -372,7 +373,7 @@ function RankingPrint({ view, items, tierFilter, ordem, titulo, filtrosDescricao
             {mostrarPosicao && <td style={{ paddingLeft: 16 }}>{base.posicao}º</td>}
             <td style={{ paddingLeft: 16 }}>↳ {base.nome} <small>({base.tier?.nome})</small></td>
             <td>{base.sub || '—'}</td>
-            <td>{Number(base.pontos).toFixed(1)}</td>
+            <td>{fmtPontos(base.pontos)}</td>
           </tr>
         ))
       }
@@ -394,7 +395,7 @@ function RankingPrint({ view, items, tierFilter, ordem, titulo, filtrosDescricao
           <tbody>
             {ordenarItens(items, 'pontuacao').map(item => (
               <tr key={item.id}>
-                <td>{item.posicao}º</td><td>{item.nome}</td><td>{item.base || '—'}</td><td>{item.count}</td><td>{Number(item.pontos).toFixed(1)}</td>
+                <td>{item.posicao}º</td><td>{item.nome}</td><td>{item.base || '—'}</td><td>{item.count}</td><td>{fmtPontos(item.pontos)}</td>
               </tr>
             ))}
           </tbody>
@@ -471,7 +472,7 @@ function RankingList({ items, startRank, showPoints, labelPts = 'pts' }) {
             )}
             {showPoints && (
               <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--c2)', flexShrink: 0 }}>
-                {Number(item.pontos).toFixed(1)} {labelPts}
+                {fmtPontos(item.pontos)} {labelPts}
               </div>
             )}
           </div>
@@ -500,7 +501,7 @@ function Top3Chips({ top3, showPoints, labelPts }) {
               </div>
               {showPoints && (
                 <div style={{ fontSize: 12, color: cfg.border, fontWeight: 700 }}>
-                  {Number(item.pontos).toFixed(1)} {labelPts}
+                  {fmtPontos(item.pontos)} {labelPts}
                 </div>
               )}
             </div>
@@ -576,7 +577,7 @@ function BasePerformanceDetail({ score, notas, isSoul, type, standalone = false,
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ color: tier.cor, fontWeight: 900, fontSize: 20 }}>{tier.icon} {tier.nome}</div>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>{score.pontos.toFixed(1)} pontos</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>{fmtPontos(score.pontos)} pontos</div>
         </div>
       </div>
 
@@ -587,7 +588,7 @@ function BasePerformanceDetail({ score, notas, isSoul, type, standalone = false,
               <div className="base-report-quarter-title">{trimestre.trimestre}º Trimestre</div>
               <div className="base-report-quarter-period">{trimestre.periodo}</div>
             </div>
-            <strong>{trimestre.total.toFixed(1)} pts</strong>
+            <strong>{fmtPontos(trimestre.total)} pts</strong>
           </div>
 
           <h4>Desafios</h4>
@@ -595,7 +596,7 @@ function BasePerformanceDetail({ score, notas, isSoul, type, standalone = false,
             <div className="table-wrap"><table>
               <thead><tr><th>Desafio</th><th>Categoria</th><th>Regra</th><th>Realizações</th><th>Pontos</th></tr></thead>
               <tbody>{trimestre.desafios.map((desafio, index) => <tr key={`${desafio.id}-${index}`}>
-                <td>{desafio.nome}</td><td>{desafio.categoria || '—'}</td><td>{desafio.regra}</td><td>{desafio.realizacoes}</td><td><strong>{desafio.pontos.toFixed(1)}</strong></td>
+                <td>{desafio.nome}</td><td>{desafio.categoria || '—'}</td><td>{desafio.regra}</td><td>{desafio.realizacoes}</td><td><strong>{fmtPontos(desafio.pontos)}</strong></td>
               </tr>)}</tbody>
             </table></div>
           )}
@@ -605,7 +606,7 @@ function BasePerformanceDetail({ score, notas, isSoul, type, standalone = false,
             <div className="table-wrap"><table>
               <thead><tr><th>Data</th><th>Aluno</th><th>Prova</th><th>Nota</th></tr></thead>
               <tbody>{trimestre.notas.map((nota, index) => <tr key={nota.id ?? nota.id_form ?? `${nota.data}-${index}`}>
-                <td>{String(nota.data ?? nota.Data ?? '').slice(0, 10)}</td><td>{nota.Membros ?? nota.nome_aluno ?? '—'}</td><td>{nota.titulo ?? nota.Titulo ?? '—'}</td><td><strong>{Number(nota.nota ?? nota.Nota).toFixed(1)}</strong></td>
+                <td>{String(nota.data ?? nota.Data ?? '').slice(0, 10)}</td><td>{nota.Membros ?? nota.nome_aluno ?? '—'}</td><td>{nota.titulo ?? nota.Titulo ?? '—'}</td><td><strong>{fmtPontos(nota.nota ?? nota.Nota)}</strong></td>
               </tr>)}</tbody>
             </table></div>
           )}
@@ -615,7 +616,7 @@ function BasePerformanceDetail({ score, notas, isSoul, type, standalone = false,
             <div className="table-wrap"><table>
               <thead><tr><th>Membro</th><th>Início</th><th>Encerramento</th><th>Critério</th><th>Pontos</th></tr></thead>
               <tbody>{trimestre.cards.map((card, index) => <tr key={card.id ?? index}>
-                <td>{card.nome}</td><td>{card.data_inicio || '—'}</td><td>{card.data_fim || 'Em andamento'}</td><td>{card.data_fim ? 'Card concluído' : 'Card ativado'}</td><td><strong>{card.pontos.toFixed(1)}</strong></td>
+                <td>{card.nome}</td><td>{card.data_inicio || '—'}</td><td>{card.data_fim || 'Em andamento'}</td><td>{card.data_fim ? 'Card concluído' : 'Card ativado'}</td><td><strong>{fmtPontos(card.pontos)}</strong></td>
               </tr>)}</tbody>
             </table></div>
           )}
@@ -625,19 +626,19 @@ function BasePerformanceDetail({ score, notas, isSoul, type, standalone = false,
             <div className="table-wrap"><table>
               <thead><tr><th>Data</th><th>Nome</th><th>Pontos</th></tr></thead>
               <tbody>{trimestre.batismos.map((batismo, index) => <tr key={batismo.id ?? index}>
-                <td>{batismo.data || `Mês ${batismo.mes}`}</td><td>{batismo.nome || '—'}</td><td><strong>{batismo.pontos.toFixed(1)}</strong></td>
+                <td>{batismo.data || `Mês ${batismo.mes}`}</td><td>{batismo.nome || '—'}</td><td><strong>{fmtPontos(batismo.pontos)}</strong></td>
               </tr>)}</tbody>
             </table></div>
           )}
 
-          <div className="base-report-quarter-total">Fechamento do {trimestre.trimestre}º trimestre: <strong>{trimestre.total.toFixed(1)} pontos</strong></div>
+          <div className="base-report-quarter-total">Fechamento do {trimestre.trimestre}º trimestre: <strong>{fmtPontos(trimestre.total)} pontos</strong></div>
         </section>
       ))}
 
       <div className="stats-grid" style={{ marginBottom: 18 }}>
         {components.map(component => (
           <div key={component.label} className="stat-card c1" style={{ padding: '12px 10px' }}>
-            <div className="stat-num" style={{ fontSize: 22 }}>{component.value.toFixed(1)}</div>
+            <div className="stat-num" style={{ fontSize: 22 }}>{fmtPontos(component.value)}</div>
             <div className="stat-label">{component.label}</div>
           </div>
         ))}
@@ -645,15 +646,15 @@ function BasePerformanceDetail({ score, notas, isSoul, type, standalone = false,
 
       <div style={{ padding: '10px 12px', marginBottom: 18, borderRadius: 8, background: `${tier.cor}12`, border: `1px solid ${tier.cor}33`, fontSize: 13 }}>
         {nextTier
-          ? <>A base está na faixa <strong style={{ color: tier.cor }}>{tier.nome}</strong> porque acumulou <strong>{score.pontos.toFixed(1)} pontos</strong>. Faltam <strong>{pointsToNext.toFixed(1)} pontos</strong> para {nextTier.icon} <strong>{nextTier.nome}</strong> ({nextTier.min} pontos).</>
-          : <>A base está na faixa máxima, <strong style={{ color: tier.cor }}>{tier.nome}</strong>, com <strong>{score.pontos.toFixed(1)} pontos</strong>.</>}
+          ? <>A base está na faixa <strong style={{ color: tier.cor }}>{tier.nome}</strong> porque acumulou <strong>{fmtPontos(score.pontos)} pontos</strong>. Faltam <strong>{fmtPontos(pointsToNext)} pontos</strong> para {nextTier.icon} <strong>{nextTier.nome}</strong> ({fmtNumero(nextTier.min)} pontos).</>
+          : <>A base está na faixa máxima, <strong style={{ color: tier.cor }}>{tier.nome}</strong>, com <strong>{fmtPontos(score.pontos)} pontos</strong>.</>}
       </div>
 
       <div className="base-report-closing">
         <h3>Fechamento anual</h3>
         <div className="base-report-closing-grid">
-          {components.map(component => <div key={component.label}><span>{component.label}</span><strong>{component.value.toFixed(1)}</strong></div>)}
-          <div className="base-report-closing-total"><span>Total geral</span><strong>{score.pontos.toFixed(1)} pontos</strong></div>
+          {components.map(component => <div key={component.label}><span>{component.label}</span><strong>{fmtPontos(component.value)}</strong></div>)}
+          <div className="base-report-closing-total"><span>Total geral</span><strong>{fmtPontos(score.pontos)} pontos</strong></div>
         </div>
       </div>
       <div className="base-report-signatures">
@@ -1230,7 +1231,7 @@ export default function Ranking() {
     let items = scoresPorBase.map(b => ({
       ...b,
       sub: [b.distrito, b.regiao].filter(Boolean).join(' · '),
-      extra: b.notaMedia > 0 ? `média notas: ${b.notaMedia.toFixed(1)}` : null,
+      extra: b.notaMedia > 0 ? `média notas: ${fmtPontos(b.notaMedia)}` : null,
       tier: getTier(b.pontos, type === 'soul'),
       isSoul: type === 'soul',
     }))

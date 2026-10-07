@@ -2,7 +2,7 @@ import { useState } from 'react'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { useIgrejas } from '../hooks/useIgrejas'
-import { today, fmtDate, chipClass } from '../utils/helpers'
+import { today, fmtDate, chipClass, fmtNumero } from '../utils/helpers'
 
 const EMPTY = {
   regiao_id: '', distrito_id: '', igreja_id: '',
@@ -142,7 +142,7 @@ export default function Pontuacoes() {
                     <td><span className="chip chip-muted">{p.nome_igreja || '—'}</span></td>
                     <td>{fmtDate(p.data)}</td>
                     <td>{p.tipo}</td>
-                    <td><strong style={{ color: 'var(--accent)', fontSize: 15 }}>{p.pontos}</strong></td>
+                    <td><strong style={{ color: 'var(--accent)', fontSize: 15 }}>{fmtNumero(p.pontos)}</strong></td>
                     <td style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.obs || '—'}</td>
                     <td>
                       <span

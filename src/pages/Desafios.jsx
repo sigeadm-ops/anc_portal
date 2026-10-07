@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
+import { fmtPontos, fmtNumero } from '../utils/helpers'
 import { useParams, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -342,7 +343,7 @@ export default function Desafios() {
 
   function ptsSemanal(desafio) {
     const divisor = divisorCadencia(desafio, sabados)
-    return (realizadosNoTrim(desafio.id) * (Number(desafio.pontos_total) / divisor)).toFixed(1)
+    return (realizadosNoTrim(desafio.id) * (Number(desafio.pontos_total) / divisor)).toFixed(2)
   }
 
   function ptsPontualTrim(desafio) {
@@ -631,7 +632,7 @@ export default function Desafios() {
             </div>
             <div style={{ marginTop: 8, fontSize: 11, opacity: type === 'soul' ? 0.8 : 0.5, fontWeight: type === 'soul' ? 600 : 400 }}>
               {numSabados} sábados no {NOMES_TRIM[trimestre]}
-              {numSabados > 0 && ` · ≈ ${ptsPorSabado(50).toFixed(2)} pts/sáb p/ desafio de 50 pts`}
+              {numSabados > 0 && ` · ≈ ${fmtPontos(ptsPorSabado(50), 2)} pts/sáb p/ desafio de 50 pts`}
               {isLocked && ' · 🔒 somente leitura'}
             </div>
           </div>
@@ -689,7 +690,7 @@ export default function Desafios() {
                               <tr key={d.id}>
                                 <td><span style={{ fontWeight: 500 }}>{d.nome}</span></td>
                                 <td style={{ textAlign: 'center' }}>
-                                  <strong style={{ color: type === 'soul' ? 'var(--soul-brown)' : 'var(--c2)' }}>{d.pontos_total}</strong>
+                                  <strong style={{ color: type === 'soul' ? 'var(--soul-brown)' : 'var(--c2)' }}>{fmtNumero(d.pontos_total)}</strong>
                                 </td>
                                 {sabados.map(s => {
                                   const isFuturo  = s > hojeStr
@@ -732,7 +733,7 @@ export default function Desafios() {
                                   )
                                 })}
                                 <td style={{ textAlign: 'center' }}>
-                                  <strong style={{ color: pts > 0 ? 'var(--good)' : 'var(--muted)' }}>{pts} pts</strong>
+                                  <strong style={{ color: pts > 0 ? 'var(--good)' : 'var(--muted)' }}>{fmtPontos(pts)} pts</strong>
                                 </td>
                                 <td style={{ textAlign: 'center' }}>
                                   <span className={`chip ${pctVal >= 80 ? 'chip-good' : pctVal >= 50 ? 'chip-warn' : 'chip-muted'}`}>
@@ -978,7 +979,7 @@ function TrPontualMensal({ desafio, marcos, ano, canEdit, onToggle }) {
       </td>
       <td style={{ textAlign: 'center', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
         <div style={{ fontWeight: 700, fontSize: 16, color: ptsTotal > 0 ? 'var(--c2)' : 'var(--muted)' }}>
-          {ptsTotal % 1 === 0 ? ptsTotal : ptsTotal.toFixed(1)}
+          {fmtNumero(ptsTotal)}
         </div>
         <div style={{ fontSize: 10, opacity: 0.5 }}>{completedCount}/12 meses</div>
       </td>
@@ -1139,8 +1140,8 @@ function StatCard({ label, valor, max, cor, destaque, isSoul }) {
     }}>
       <div style={{ fontSize: 11, opacity: isSoul ? 0.8 : 0.6, marginBottom: 4, fontWeight: isSoul ? 700 : 400, color: isSoul ? 'var(--soul-brown)' : 'inherit' }}>{label}</div>
       <div style={{ fontSize: destaque ? 22 : 18, fontWeight: 900, color: isSoul && !destaque ? 'var(--soul-chocolate)' : cor }}>
-        {Number.isInteger(valor) ? valor : Number(valor).toFixed(1)}{' '}
-        <span style={{ fontSize: 11, opacity: 0.5 }}>/ {max} pts</span>
+        {fmtNumero(valor)}{' '}
+        <span style={{ fontSize: 11, opacity: 0.5 }}>/ {fmtNumero(max)} pts</span>
       </div>
       <div style={{ marginTop: 8, height: 4, background: isSoul ? 'rgba(62,32,0,.08)' : 'rgba(255,255,255,.08)', borderRadius: 2 }}>
         <div style={{ width: p + '%', height: '100%', background: cor, borderRadius: 2, transition: 'width .4s' }} />

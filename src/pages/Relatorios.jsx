@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useTable } from '../hooks/useTable'
-import { fmtDate, buildBaseLabel, formatBaseId } from '../utils/helpers'
+import { fmtDate, buildBaseLabel, formatBaseId, fmtPontos } from '../utils/helpers'
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { db } from '../api/db'
 import toast from 'react-hot-toast'
@@ -956,7 +956,7 @@ function DesempenhoTab() {
                     </td>
                   ))}
                   <td style={{ textAlign: 'center', fontSize: 13, color: row.notaMedia > 0 ? 'var(--good)' : 'var(--muted)' }}>
-                    {row.notaMedia > 0 ? row.notaMedia.toFixed(1) : '—'}
+                    {row.notaMedia > 0 ? fmtPontos(row.notaMedia) : '—'}
                   </td>
                   <td style={{ textAlign: 'center', fontSize: 13, color: row.discipulosPts > 0 ? 'var(--c3)' : 'var(--muted)' }}>
                     {row.discipulosPts > 0 ? row.discipulosPts : '—'}
@@ -1056,7 +1056,7 @@ function ColumnLineChart({ title, rows, annualLineValue = 0, variant = 'teen' })
               border: annualBadgeBorder,
               color: annualBadgeColor
             }}>
-              Anual {clampNota(annualLineValue).toFixed(1)}
+              Anual {fmtPontos(clampNota(annualLineValue))}
             </div>
 
             <div style={{ height: 112, display: 'grid', gridTemplateColumns: `repeat(${rows.length}, minmax(16px,1fr))`, gap: 12, alignItems: 'end', position: 'relative', zIndex: 2 }}>
@@ -1076,7 +1076,7 @@ function ColumnLineChart({ title, rows, annualLineValue = 0, variant = 'teen' })
                         padding: '0 6px',
                         boxShadow: `0 0 0 4px ${labelMaskBg}`,
                       }}>
-                        {valuesWithData[i].toFixed(1)}
+                        {fmtPontos(valuesWithData[i])}
                       </div>
                     )}
                     {isFuturo && <div style={{ textAlign: 'center', fontSize: 11, fontWeight: 700, opacity: 0 }}>0.0</div>}
@@ -1187,7 +1187,7 @@ function GaugeChart({ title, value, variant = 'teen' }) {
             transform: 'translate(-50%,-50%)',
             textAlign: 'center'
           }}>
-            <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1, color }}>{score.toFixed(1)}</div>
+            <div style={{ fontSize: 36, fontWeight: 900, lineHeight: 1, color }}>{fmtPontos(score)}</div>
             <div style={{ fontSize: 11, opacity: 0.78, marginTop: 4 }}>Média Geral</div>
           </div>
         </div>
@@ -1201,7 +1201,7 @@ function GaugeChart({ title, value, variant = 'teen' }) {
             return (
               <div key={mark} style={{ textAlign: 'center' }}>
                 <div style={{ height: 6, borderRadius: 999, background: c, marginBottom: 3 }} />
-                <div style={{ fontSize: 10, opacity: 0.7 }}>{mark.toFixed(1)}</div>
+                <div style={{ fontSize: 10, opacity: 0.7 }}>{fmtPontos(mark, 1)}</div>
               </div>
             )
           })}
@@ -1533,7 +1533,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
           <g>
             <rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barW}" height="${barH.toFixed(2)}" rx="6" fill="url(#barGrad)" />
             <text x="${labelX.toFixed(2)}" y="${(h - 10).toFixed(2)}" text-anchor="middle" class="xlab">${escapeHtml(r.label)}</text>
-            <text x="${labelX.toFixed(2)}" y="${(y - 5).toFixed(2)}" text-anchor="middle" class="val">${r.v.toFixed(1)}</text>
+            <text x="${labelX.toFixed(2)}" y="${(y - 5).toFixed(2)}" text-anchor="middle" class="val">${fmtPontos(r.v)}</text>
           </g>
         `
       }).join('')
@@ -1561,7 +1561,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
           <div class="legend">
             <span><i class="dot col"></i>Colunas</span>
             <span><i class="dot dev"></i>Linha de Desenvolvimento</span>
-            <span><i class="dot yr"></i>Linha Anual (${anual.toFixed(1)})</span>
+            <span><i class="dot yr"></i>Linha Anual (${fmtPontos(anual)})</span>
           </div>
         </section>
       `
@@ -1575,7 +1575,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
           <td>${escapeHtml(r.tipo)}</td>
           <td>${escapeHtml(r.prova)}${r.isDuplicado ? ` <strong style="color:#c81e3a;">⚠ duplicado${r.duplicidadeMaisRecente ? ' (mais recente)' : ''}</strong>` : ''}</td>
           <td>${escapeHtml(r.base)}</td>
-          <td class="nota">${clampNota(r.nota).toFixed(1)}</td>
+          <td class="nota">${fmtPontos(clampNota(r.nota))}</td>
           <td>${escapeHtml(r.observacao || '—')}</td>
         </tr>
       `)
@@ -1587,7 +1587,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
           <td>${r.trimestre}º Trim</td>
           <td>${r.sabadosRef}</td>
           <td class="nota">${r.sim}</td>
-          <td>${r.percentual.toFixed(1)}%</td>
+          <td>${fmtPontos(r.percentual, 1)}%</td>
         </tr>
       `)
       .join('')
@@ -1711,10 +1711,10 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
     <section class="content">
       <div class="stats">
         <article class="card"><div class="num">${historico.length}</div><div class="lbl">Lançamentos</div></article>
-        <article class="card"><div class="num">${score.toFixed(1)}</div><div class="lbl">Média Geral</div></article>
+        <article class="card"><div class="num">${fmtPontos(score)}</div><div class="lbl">Média Geral</div></article>
         <article class="card"><div class="num">${porMes.filter(m => m.qtd > 0).length}/${porTrimestre.filter(t => t.qtd > 0).length}</div><div class="lbl">Meses / Trimestres</div></article>
-        <article class="card"><div class="num">${anual.toFixed(1)}</div><div class="lbl">Referência Anual</div></article>
-        <article class="card"><div class="num">${notaMilStats.simAno}</div><div class="lbl">Sábados com SIM (${notaMilPct.toFixed(1)}% freq.)</div></article>
+        <article class="card"><div class="num">${fmtPontos(anual)}</div><div class="lbl">Referência Anual</div></article>
+        <article class="card"><div class="num">${notaMilStats.simAno}</div><div class="lbl">Sábados com SIM (${fmtPontos(notaMilPct, 1)}% freq.)</div></article>
       </div>
 
       <div class="grid2">
@@ -1739,7 +1739,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
             <text x="214" y="136" fill="${isSoulMode ? '#6B3E00' : '#d7defd'}" font-size="11">10</text>
           </svg>
           <div>
-            <div class="g-num">${score.toFixed(1)}</div>
+            <div class="g-num">${fmtPontos(score)}</div>
             <div class="g-desc">Quanto mais próximo de 10, maior a intensidade e consistência da evolução.</div>
             <div class="g-bar"><div class="g-fill"></div></div>
           </div>
@@ -1763,7 +1763,7 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
               <td><strong>Ano</strong></td>
               <td><strong>${notaMilStats.sabadosAno}</strong></td>
               <td class="nota"><strong>${notaMilStats.simAno}</strong></td>
-              <td><strong>${notaMilStats.percentualAno.toFixed(1)}%</strong></td>
+              <td><strong>${fmtPontos(notaMilStats.percentualAno, 1)}%</strong></td>
             </tr>
           </tbody>
         </table>
@@ -1836,10 +1836,10 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
             <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(5,minmax(120px,1fr))', flex: 1 }}>
               <div className="stat-card c1"><div className="stat-num">{historico.length}</div><div className="stat-label">Lançamentos</div></div>
-              <div className="stat-card c1"><div className="stat-num">{mediaGeral ? mediaGeral.toFixed(1) : '0.0'}</div><div className="stat-label">Média Geral</div></div>
+              <div className="stat-card c1"><div className="stat-num">{mediaGeral ? fmtPontos(mediaGeral) : '0,00'}</div><div className="stat-label">Média Geral</div></div>
               <div className="stat-card c1"><div className="stat-num">{bonusAno}</div><div className="stat-label">Bônus (à parte da média)</div></div>
               <div className="stat-card c1"><div className="stat-num">{porMes.filter(m => m.qtd > 0).length}/{porTrimestre.filter(t => t.qtd > 0).length}</div><div className="stat-label">Meses / Trimestres</div></div>
-              <div className="stat-card c1"><div className="stat-num">{notaMilStats.simAno}</div><div className="stat-label">Sábados com SIM ({notaMilStats.percentualAno.toFixed(1)}% freq.)</div></div>
+              <div className="stat-card c1"><div className="stat-num">{notaMilStats.simAno}</div><div className="stat-label">Sábados com SIM ({fmtPontos(notaMilStats.percentualAno, 1)}% freq.)</div></div>
             </div>
 
             <div style={{ display: 'flex', gap: 8 }}>
@@ -1876,14 +1876,14 @@ function RelatorioIndividualTab({ bases, notasTeen, notasSoul, membros, tipo, se
                   <td>{row.trimestre}º Trimestre</td>
                   <td style={{ textAlign: 'center' }}>{row.sabadosRef}</td>
                   <td style={{ textAlign: 'center', fontWeight: 800, color: 'var(--c2)' }}>{row.sim}</td>
-                  <td style={{ textAlign: 'center' }}>{row.percentual.toFixed(1)}%</td>
+                  <td style={{ textAlign: 'center' }}>{fmtPontos(row.percentual, 1)}%</td>
                 </tr>
               ))}
               <tr>
                 <td><strong>Ano</strong></td>
                 <td style={{ textAlign: 'center' }}><strong>{notaMilStats.sabadosAno}</strong></td>
                 <td style={{ textAlign: 'center', fontWeight: 900, color: 'var(--c2)' }}><strong>{notaMilStats.simAno}</strong></td>
-                <td style={{ textAlign: 'center' }}><strong>{notaMilStats.percentualAno.toFixed(1)}%</strong></td>
+                <td style={{ textAlign: 'center' }}><strong>{fmtPontos(notaMilStats.percentualAno, 1)}%</strong></td>
               </tr>
             </tbody>
           </table>

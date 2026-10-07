@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { fmtPontos, fmtNumero } from '../utils/helpers'
 import { useParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -357,7 +358,7 @@ function TrimestresConfig() {
           </div>
           {preview !== null && (
             <div className="status-bar ok" style={{ marginTop: 8 }}>
-              {preview} sábados no período · {preview > 0 ? (50 / preview).toFixed(2) : '—'} pts/sáb (ex. desafio de 50 pts)
+              {preview} sábados no período · {preview > 0 ? fmtPontos(50 / preview, 2) : '—'} pts/sáb (ex. desafio de 50 pts)
             </div>
           )}
         </div>
@@ -784,7 +785,7 @@ function DesafiosCatalogoConfig({ filterMin }) {
                         </div>
                       )}
                     </td>
-                    <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--c2)' }}>{d.pontos_total}</td>
+                    <td style={{ textAlign: 'center', fontWeight: 700, color: 'var(--c2)' }}>{fmtNumero(d.pontos_total)}</td>
                     <td style={{ textAlign: 'center' }}>
                       <button
                         className={`chip ${d.ativo ? 'chip-good' : 'chip-muted'}`}
@@ -905,8 +906,8 @@ function DiscipulosConfig() {
           </div>
           {Number(pontosCartao) > 0 && (
             <p style={{ fontSize: 12, opacity: 0.6, marginTop: 10 }}>
-              ½ ao ativar = <strong>{(Number(pontosCartao) / 2).toFixed(2)} pts</strong> &nbsp;·&nbsp;
-              completo = <strong>{Number(pontosCartao).toFixed(2)} pts</strong>
+              ½ ao ativar = <strong>{fmtPontos(Number(pontosCartao) / 2, 2)} pts</strong> &nbsp;·&nbsp;
+              completo = <strong>{fmtPontos(pontosCartao, 2)} pts</strong>
             </p>
           )}
         </div>

@@ -31,6 +31,18 @@ export function toInputDate(d) {
   return ''
 }
 
+// Pontos no padrão brasileiro: ponto no milhar, vírgula no decimal (1.234,50)
+export function fmtPontos(value, casas = 2) {
+  const n = Number(value)
+  return (Number.isFinite(n) ? n : 0).toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas })
+}
+
+// Igual a fmtPontos, mas valor inteiro sai sem casas decimais (200 → "200", 12.5 → "12,50")
+export function fmtNumero(value, casas = 2) {
+  const n = Number(value)
+  return Number.isInteger(n) ? fmtPontos(n, 0) : fmtPontos(n, casas)
+}
+
 export function nextCode(prefix, list) {
   const nums = list.map(r => {
     const m = String(r.code ?? r.id ?? '').match(/\d+$/)

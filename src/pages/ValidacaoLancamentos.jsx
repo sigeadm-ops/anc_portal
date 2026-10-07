@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { fmtPontos } from '../utils/helpers'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
@@ -61,7 +62,7 @@ function fmtData(value) {
 }
 
 function fmtPts(value) {
-  return Number(value ?? 0).toFixed(1)
+  return fmtPontos(value)
 }
 
 function fmtPct(value) {
@@ -334,7 +335,7 @@ export default function ValidacaoLancamentos() {
   ].filter(Boolean).join(' · ')
 
   function baixarCSV() {
-    const num = v => fmtPts(v).replace('.', ',') // vírgula decimal para o Excel pt-BR
+    const num = v => Number(v ?? 0).toFixed(2).replace('.', ',') // vírgula decimal para o Excel pt-BR (sem separador de milhar)
     const linhas = []
     relatorio.forEach(b => {
       const geo = {
