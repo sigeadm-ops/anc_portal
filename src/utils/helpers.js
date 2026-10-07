@@ -43,6 +43,27 @@ export function fmtNumero(value, casas = 2) {
   return Number.isInteger(n) ? fmtPontos(n, 0) : fmtPontos(n, casas)
 }
 
+// Número para célula de CSV: vírgula decimal e sem ponto de milhar, que é o
+// formato que o Excel pt-BR lê como número.
+export function numCSV(value, casas = 2) {
+  const n = Number(value)
+  return (Number.isFinite(n) ? n : 0).toFixed(casas).replace('.', ',')
+}
+
+// Baixa uma lista de objetos como CSV (separador ';' e BOM UTF-8 para o Excel).
+// As colunas vêm das chaves da primeira linha.
+export function downloadCSV(rows, filename) {
+  if (!rows.length) return
+  const cel = v => '"' + String(v ?? '').replace(/"/g, '""') + '"'
+  const colunas = Object.keys(rows[0])
+  const csv = '\uFEFF' + [colunas.map(cel).join(';'), ...rows.map(r => colunas.map(c => cel(r[c])).join(';'))].join('\r\n')
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
+  link.download = filename + '.csv'
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
 export function nextCode(prefix, list) {
   const nums = list.map(r => {
     const m = String(r.code ?? r.id ?? '').match(/\d+$/)

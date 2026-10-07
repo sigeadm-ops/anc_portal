@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useAuthStore } from '../store/authStore'
-import { fmtPontos, fmtNumero } from '../utils/helpers'
+import { fmtPontos, fmtNumero, numCSV, downloadCSV } from '../utils/helpers'
 import { gerarSabados, divisorCadencia, isProvaBonus, isProvaTitulo, provasPrevistas, descartarNotasDuplicadas } from '../lib/desafiosPontuacao'
 
 function anoAtual() { return new Date().getFullYear() }
@@ -1370,6 +1371,44 @@ export default function Ranking() {
     : nivel === 'igreja' ? 'Igreja'
     : 'Base'
 
+  // CSV com o mesmo recorte da impressão: visão, nível, filtros, faixa e ordenação
+  function exportarCSV() {
+    let linhas
+    if (view === 'alunos') {
+      linhas = ordenarItens(listAtual, 'pontuacao').map(a => ({
+        'Posição': a.posicao, 'Aluno': a.nome, 'Base': a.base, 'Igreja': a.igreja, 'Distrito': a.distrito, 'Região': a.regiao,
+        'Provas lançadas': a.count, 'Pontos (média)': numCSV(a.pontos),
+      }))
+    } else {
+      const mostrarPosicao = ordemEfetiva === 'pontuacao'
+      const grupos = agruparPorFaixa(listAtual, ordemEfetiva)
+      const linhaBase = (b, agrupamento) => ({
+        'Tipo': 'Base', 'Agrupamento': agrupamento, 'Nome': b.nome, 'Faixa': b.tier?.nome ?? '',
+        'Região': b.regiao, 'Distrito': b.distrito, 'Igreja': b.igreja, 'Qtd. bases': '',
+        'Pontos': numCSV(b.pontos), 'Desafios': numCSV(b.componentes?.desafios), 'Notas': numCSV(b.componentes?.notas),
+        'Discipulado': numCSV(b.componentes?.discipulos), 'Batismos': numCSV(b.componentes?.batismos),
+      })
+      linhas = TIERS_ORDER
+        .filter(tier => tierFilter === 'Todas' || tierFilter === tier.nome)
+        .flatMap(tier => grupos[tier.nome].flatMap(item => {
+          const posicao = pos => ({ 'Posição na faixa': mostrarPosicao ? pos : '' })
+          if (!item.basesList) return [{ ...posicao(item.posicao), ...linhaBase(item, '') }]
+          return [
+            {
+              ...posicao(item.posicao),
+              'Tipo': colunaNomePrint, 'Agrupamento': '', 'Nome': item.nome, 'Faixa': item.tier?.nome ?? '',
+              'Região': '', 'Distrito': '', 'Igreja': '', 'Qtd. bases': item.bases,
+              'Pontos': numCSV(item.pontos), 'Desafios': '', 'Notas': '', 'Discipulado': '', 'Batismos': '',
+            },
+            ...ordenarItens(item.basesList, ordemEfetiva).map(b => ({ ...posicao(''), ...linhaBase(b, item.nome) })),
+          ]
+        }))
+    }
+    if (!linhas.length) return toast.error('Nada para exportar com os filtros atuais.')
+    const slug = normalizeBaseName(`${currentTipo}_${view}_${nomeNivel}`).replace(/[^a-z0-9]+/g, '_')
+    downloadCSV(linhas, `ranking_${slug}_${ano}`)
+  }
+
   if (reportBaseId && !isAdmin) return <Navigate to="/admin/login" replace />
 
   if (reportBaseId) {
@@ -1422,6 +1461,17 @@ export default function Ranking() {
                 title="Imprime o ranking com os filtros, faixa e ordenação atuais"
               >
                 🖨️ Imprimir
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={exportarCSV}
+                disabled={isLoading || listAtual.length === 0}
+                title="Baixa o ranking em CSV com os filtros, faixa e ordenação atuais"
+              >
+                📥 CSV
               </button>
             )}
             <select value={ano} onChange={e => setAno(Number(e.target.value))} style={{ width: 92 }}>
