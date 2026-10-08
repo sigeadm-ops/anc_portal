@@ -1941,3 +1941,200 @@ tbody td input:focus, tbody td select:focus {
 .theme-soul .admin-tab-btn .tab-icon {
   filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
 }
+
+/* ================================================================
+   Pódio — telão de premiação (/admin/podio/:type)
+   Tela cheia, fora do layout com menu. Escuro/roxo no G148 Teen,
+   âmbar no Soul+ (.podio-page.theme-soul).
+   ================================================================ */
+.podio-page {
+  --p-text: #fff;
+  --p-muted: rgba(255,255,255,.68);
+  --p-painel: rgba(14,22,63,.78);
+  --p-linha: rgba(255,255,255,.10);
+  --p-acento: var(--c1);
+  --p-destaque: var(--c2);
+  --p-ouro: #FFD700;
+  --p-prata: #C7CEDB;
+  --p-bronze: #E0975A;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 1.6vh, 18px);
+  padding: clamp(12px, 2.2vh, 28px) clamp(14px, 2.2vw, 36px);
+  color: var(--p-text);
+  background:
+    radial-gradient(900px 520px at 12% 0%, rgba(124,58,237,.38), transparent 70%),
+    radial-gradient(800px 480px at 92% 8%, rgba(34,211,238,.16), transparent 65%),
+    radial-gradient(900px 600px at 60% 110%, rgba(251,113,133,.16), transparent 70%),
+    linear-gradient(180deg, var(--bg1), var(--bg0));
+  overflow: hidden;
+}
+
+.podio-page.theme-soul {
+  --p-text: #281400;
+  --p-muted: rgba(62,32,0,.68);
+  --p-painel: rgba(255,248,220,.9);
+  --p-linha: rgba(255,143,0,.35);
+  --p-acento: var(--soul-accent);
+  --p-destaque: #8D5200;
+  --p-ouro: #B37400;
+  --p-prata: #6B7280;
+  --p-bronze: #92400E;
+  background:
+    radial-gradient(900px 420px at 15% 5%,  rgba(255,179,0,.35), transparent 70%),
+    radial-gradient(700px 380px at 85% 0%,  rgba(255,143,0,.25), transparent 65%),
+    radial-gradient(700px 500px at 75% 95%, rgba(255,111,0,.20), transparent 70%),
+    linear-gradient(180deg, #FFF9E6, #FFE082);
+}
+
+.podio-topo { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.podio-titulo { display: flex; align-items: center; gap: clamp(10px, 1.2vw, 20px); min-width: 0; }
+.podio-trofeu { font-size: clamp(34px, 4.2vw, 68px); line-height: 1; filter: drop-shadow(0 6px 18px rgba(255,215,0,.35)); }
+.podio-titulo h1 { margin: 0; font-size: clamp(22px, 2.9vw, 50px); font-weight: 800; letter-spacing: -.5px; line-height: 1.05; color: var(--p-text); }
+.podio-titulo h1 em { font-style: normal; color: var(--p-acento); }
+.podio-titulo p { margin: 4px 0 0; font-size: clamp(13px, 1.25vw, 22px); font-weight: 600; color: var(--p-muted); }
+.podio-acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.podio-page.theme-soul .btn-outline { color: #281400; border-color: rgba(62,32,0,.3); }
+.podio-page.theme-soul .btn-primary { background: linear-gradient(135deg, #FFB300, #FF8F00); color: #281400; border-color: transparent; }
+.podio-sair {
+  border: 0; background: transparent; color: var(--p-muted); cursor: pointer;
+  font-size: 18px; padding: 6px 10px; border-radius: 8px; opacity: .35;
+}
+.podio-sair:hover { opacity: 1; background: var(--p-linha); }
+
+.podio-filtros {
+  display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; border-radius: var(--radius);
+  background: var(--p-painel); border: 1px solid var(--p-linha);
+}
+.podio-filtros label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 140px; max-width: 240px; }
+.podio-filtros label span { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--p-muted); }
+.podio-filtros select { padding: 9px 12px; border-radius: var(--radius-sm); }
+.podio-page.theme-soul .podio-filtros select { background: rgba(40,20,0,.05); color: #281400 !important; border-color: rgba(62,32,0,.22); }
+.podio-page.theme-soul .podio-filtros select option { background: #FFF8E1; color: #281400; }
+.podio-seg { display: flex; border: 1px solid var(--p-linha); border-radius: var(--radius-sm); overflow: hidden; }
+.podio-seg button {
+  border: 0; background: transparent; color: var(--p-muted); cursor: pointer;
+  font-family: var(--font); font-size: 13px; font-weight: 700; padding: 9px 14px; white-space: nowrap;
+}
+.podio-seg button.active { background: var(--p-acento); color: #fff; }
+.podio-page.theme-soul .podio-seg button.active { color: #281400; }
+
+.podio-carregando { flex: 1; display: grid; place-content: center; justify-items: center; gap: 14px; color: var(--p-muted); }
+
+.podio-corpo {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: clamp(12px, 1.6vw, 26px);
+}
+.podio-painel {
+  min-height: 0; border-radius: calc(var(--radius) + 4px);
+  background: var(--p-painel); border: 1px solid var(--p-linha);
+  box-shadow: var(--shadow-sm); backdrop-filter: blur(6px);
+}
+
+/* ── Palco: números + degraus ── */
+.podio-palco { display: flex; flex-direction: column; padding: clamp(12px, 1.8vh, 24px) clamp(12px, 1.4vw, 24px) 0; overflow: hidden; }
+.podio-numeros { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.podio-numeros > div { padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--p-linha); text-align: center; }
+.podio-numeros strong { display: block; font-size: clamp(18px, 1.9vw, 32px); font-weight: 800; color: var(--p-destaque); line-height: 1.1; }
+.podio-numeros span { font-size: clamp(10px, .8vw, 14px); font-weight: 600; color: var(--p-muted); text-transform: uppercase; letter-spacing: .4px; }
+
+.podio-degraus { flex: 1; min-height: 0; display: flex; align-items: flex-end; justify-content: center; gap: clamp(6px, 1vw, 18px); padding-top: 12px; }
+.podio-degrau { --cor: var(--p-prata); flex: 1 1 0; min-width: 0; max-width: 34%; display: flex; flex-direction: column; align-items: center; gap: clamp(3px, .7vh, 8px); text-align: center; }
+.podio-degrau.lugar-1 { --cor: var(--p-ouro); }
+.podio-degrau.lugar-3 { --cor: var(--p-bronze); }
+.podio-medalha { font-size: clamp(22px, 2.4vw, 44px); line-height: 1; min-height: 1em; }
+.podio-avatar {
+  width: clamp(54px, 6.2vw, 110px); aspect-ratio: 1; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: clamp(18px, 2.1vw, 38px); font-weight: 800; color: #fff; letter-spacing: -1px;
+  background: linear-gradient(135deg, var(--cor), color-mix(in srgb, var(--cor) 55%, #000));
+  border: 3px solid var(--cor);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--cor) 50%, transparent);
+}
+.lugar-1 .podio-avatar { width: clamp(68px, 8vw, 144px); font-size: clamp(22px, 2.7vw, 50px); }
+.podio-nome {
+  max-width: 100%; font-size: clamp(14px, 1.45vw, 28px); font-weight: 800; line-height: 1.15;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+}
+.lugar-1 .podio-nome { font-size: clamp(16px, 1.8vw, 34px); }
+.podio-sub { max-width: 100%; font-size: clamp(10px, .85vw, 16px); font-weight: 600; color: var(--p-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.podio-pontos { font-size: clamp(18px, 2.2vw, 42px); font-weight: 800; color: var(--cor); line-height: 1.05; font-variant-numeric: tabular-nums; }
+.lugar-1 .podio-pontos { font-size: clamp(22px, 2.9vw, 58px); }
+.podio-pontos small { font-size: .42em; font-weight: 700; opacity: .8; }
+.podio-faixa { font-size: clamp(10px, .8vw, 15px); font-weight: 700; padding: 3px 10px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+.podio-plataforma {
+  width: 100%; height: clamp(60px, 18vh, 210px); margin-top: 4px;
+  display: grid; place-items: center;
+  border-radius: 14px 14px 0 0; border: 1px solid color-mix(in srgb, var(--cor) 45%, transparent); border-bottom: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cor) 34%, transparent), color-mix(in srgb, var(--cor) 8%, transparent));
+}
+.lugar-1 .podio-plataforma { height: clamp(90px, 27vh, 320px); }
+.lugar-3 .podio-plataforma { height: clamp(44px, 12vh, 140px); }
+/* No fundo âmbar o dourado/prata das faixas some: texto em marrom */
+.podio-page.theme-soul .podio-faixa { color: #5D3A00 !important; border-color: rgba(141,82,0,.45) !important; }
+.podio-plataforma span { font-size: clamp(26px, 3.4vw, 64px); font-weight: 800; color: var(--cor); opacity: .55; }
+
+/* Posição sem participante: degrau em branco */
+.podio-degrau.vazio .podio-avatar { background: transparent; border-style: dashed; border-color: var(--p-linha); box-shadow: none; }
+.podio-degrau.vazio .podio-nome { color: var(--p-muted); opacity: .5; }
+.podio-degrau.vazio .podio-plataforma { background: transparent; border-style: dashed; border-color: var(--p-linha); }
+.podio-degrau.vazio .podio-plataforma span { color: var(--p-muted); opacity: .3; }
+
+/* ── Classificação completa ── */
+.podio-lista { display: flex; flex-direction: column; overflow: hidden; }
+.podio-lista-cab, .podio-lista li { display: flex; align-items: center; gap: clamp(8px, 1vw, 16px); padding-inline: clamp(12px, 1.4vw, 24px); }
+.podio-lista-cab { padding-block: 12px; border-bottom: 1px solid var(--p-linha); font-size: clamp(10px, .8vw, 14px); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--p-muted); }
+.podio-lista-cab span:first-child { width: clamp(40px, 3.6vw, 68px); }
+.podio-lista-cab span:nth-child(2) { flex: 1; }
+.podio-lista ol { list-style: none; margin: 0; padding: 0; flex: 1; overflow-y: auto; scrollbar-width: thin; }
+.podio-lista li { padding-block: clamp(7px, 1.1vh, 14px); border-bottom: 1px solid var(--p-linha); }
+.podio-pos { width: clamp(40px, 3.6vw, 68px); flex-shrink: 0; font-size: clamp(14px, 1.3vw, 24px); font-weight: 800; color: var(--p-muted); font-variant-numeric: tabular-nums; }
+.podio-quem { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.podio-quem strong { font-size: clamp(14px, 1.3vw, 24px); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.podio-quem small { font-size: clamp(10px, .82vw, 15px); font-weight: 500; color: var(--p-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.podio-tier { font-size: clamp(14px, 1.2vw, 22px); flex-shrink: 0; }
+.podio-pts { flex-shrink: 0; font-size: clamp(15px, 1.5vw, 28px); font-weight: 800; color: var(--p-destaque); font-variant-numeric: tabular-nums; }
+.podio-lista li.top { background: color-mix(in srgb, var(--cor) 10%, transparent); }
+.podio-lista li.top .podio-pos { color: var(--cor); }
+.podio-lista li.top-1 { --cor: var(--p-ouro); }
+.podio-lista li.top-2 { --cor: var(--p-prata); }
+.podio-lista li.top-3 { --cor: var(--p-bronze); }
+.podio-vazio { flex: 1; display: grid; place-content: center; padding: 24px; text-align: center; color: var(--p-muted); font-size: clamp(14px, 1.2vw, 20px); }
+
+@media (max-width: 900px) {
+  .podio-page { height: auto; min-height: 100dvh; overflow: visible; }
+  .podio-corpo { grid-template-columns: 1fr; }
+  .podio-degraus { min-height: 340px; }
+  .podio-lista ol { overflow: visible; }
+}
+
+/* ── Revelação com suspense ── */
+.podio-palco { position: relative; }
+.podio-palco.clicavel { cursor: pointer; }
+.podio-degrau.oculto .podio-avatar { background: transparent; color: var(--cor); border-style: dashed; animation: podioPulsar 1.6s ease-in-out infinite; }
+.podio-degrau.oculto .podio-nome { color: var(--p-muted); letter-spacing: .2em; }
+.podio-lista li.oculto { opacity: .45; }
+.podio-lista li.oculto strong { letter-spacing: .2em; }
+.podio-revelar {
+  position: absolute; top: 30%; left: 50%; transform: translateX(-50%);
+  border: 1px solid var(--p-linha); border-radius: 999px; padding: 10px 22px;
+  background: var(--p-painel); color: var(--p-text); cursor: pointer;
+  font-family: var(--font); font-size: clamp(13px, 1.1vw, 20px); font-weight: 700; white-space: nowrap;
+  opacity: .75;
+}
+.podio-revelar:hover { opacity: 1; border-color: var(--p-acento); }
+.podio-page.apresentando .podio-degrau.revelado > * { animation: podioSurgir .7s cubic-bezier(.2, 1.4, .4, 1) both; }
+.podio-page.apresentando .podio-degrau.revelado > .podio-plataforma { animation: none; }
+.podio-confetes { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 2; }
+.podio-confetes span { position: absolute; top: -12%; animation: podioCair 3.2s linear both; }
+@keyframes podioPulsar { 0%, 100% { transform: scale(1); opacity: .55; } 50% { transform: scale(1.07); opacity: 1; } }
+@keyframes podioSurgir { from { opacity: 0; transform: translateY(22px) scale(.82); } to { opacity: 1; transform: none; } }
+@keyframes podioCair { to { transform: translateY(130vh) rotate(540deg); opacity: .2; } }
+@media (prefers-reduced-motion: reduce) {
+  .podio-degrau.oculto .podio-avatar, .podio-page.apresentando .podio-degrau.revelado > * { animation: none; }
+  .podio-confetes { display: none; }
+}

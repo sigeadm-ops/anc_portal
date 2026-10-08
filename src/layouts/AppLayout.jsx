@@ -38,6 +38,7 @@ const NAV_TEEN = [
 const NAV_ADMIN = [
   { to: '/admin/departamentos', icon: '🧭', label: 'Departamentos' },
   { to: '/admin/validacao', icon: '🔎', label: 'Validação de Lançamentos' },
+  { to: '/admin/podio/teen', icon: '🏆', label: 'Pódio — Telão' },
   { to: '/admin/config', icon: '⚙️', label: 'Configurações Gerais' },
 ]
 

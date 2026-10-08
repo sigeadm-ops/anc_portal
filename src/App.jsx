@@ -13,6 +13,7 @@ import Departamentos from './pages/Departamentos'
 import AdminConfig from './pages/AdminConfig'
 import AdminLogin from './pages/AdminLogin'
 import ValidacaoLancamentos from './pages/ValidacaoLancamentos'
+import Podio from './pages/Podio'
 
 import { useUIStore } from './store/uiStore'
 
@@ -70,6 +71,11 @@ export default function App() {
       <Routes>
         {/* Rota pública de login admin */}
         <Route path="/admin/login" element={<AdminLogin />} />
+
+        {/* Telão de premiação — admin, em tela cheia (sem o layout com sidebar) */}
+        <Route path="/admin/podio/:type" element={
+          <AdminRoute><Podio /></AdminRoute>
+        } />
 
         {/* Todas as outras rotas usam o layout com sidebar */}
         <Route element={<AppLayout />}>
