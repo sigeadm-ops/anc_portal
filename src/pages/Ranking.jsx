@@ -1419,13 +1419,15 @@ export default function Ranking() {
     } else {
       // Sempre uma linha por base (nos níveis agrupados, as bases que compõem
       // cada região/distrito/igreja), com a pontuação esmiuçada por componente.
-      const mostrarPosicao = ordemEfetiva === 'pontuacao'
+      // A posição é sempre a colocação por pontos dentro da faixa, mesmo
+      // quando as linhas saem em ordem alfabética.
       const basesDoRecorte = listAtual.flatMap(item => item.basesList ?? [item])
-      const grupos = agruparPorFaixa(basesDoRecorte, ordemEfetiva)
+      const grupos = agruparPorFaixa(basesDoRecorte, 'pontuacao')
+      const naOrdemDaTela = lista => ordemEfetiva === 'pontuacao' ? lista : [...lista].sort(compareNome)
       linhas = TIERS_ORDER
         .filter(tier => tierFilter === 'Todas' || tierFilter === tier.nome)
-        .flatMap(tier => grupos[tier.nome].map(b => ({
-          'Posição na faixa': mostrarPosicao ? b.posicao : '',
+        .flatMap(tier => naOrdemDaTela(grupos[tier.nome]).map(b => ({
+          'Posição na faixa': b.posicao,
           'Base': b.nome, 'Faixa': tier.nome,
           'Região': b.regiao, 'Distrito': b.distrito, 'Igreja': b.igreja,
           'Pontos': numCSV(b.pontos), 'Desafios': numCSV(b.componentes?.desafios), 'Notas': numCSV(b.componentes?.notas),
