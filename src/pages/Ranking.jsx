@@ -155,12 +155,36 @@ function ordenarItens(lista, ordem) {
   })
 }
 
-// Agrupa os itens por faixa, já ordenados dentro de cada faixa
+// Agrupa os itens por faixa, já ordenados dentro de cada faixa.
+// A faixa é SEMPRE definida pela pontuação da base, nunca pela soma do
+// agrupamento: uma região/distrito/igreja aparece em cada faixa em que tem
+// bases, listando (e somando) só as bases daquela faixa.
 function agruparPorFaixa(items, ordem) {
   const grouped = {}
   TIERS_ORDER.forEach(t => { grouped[t.nome] = [] })
   items.forEach(item => {
-    grouped[getTier(item.pontos, item.isSoul).nome].push(item)
+    if (!Array.isArray(item.basesList)) {
+      grouped[getTier(item.pontos, item.isSoul).nome].push(item)
+      return
+    }
+    const basesPorFaixa = {}
+    item.basesList.forEach(base => {
+      const faixa = getTier(base.pontos, item.isSoul).nome
+      if (!basesPorFaixa[faixa]) basesPorFaixa[faixa] = []
+      basesPorFaixa[faixa].push(base)
+    })
+    Object.entries(basesPorFaixa).forEach(([faixa, lista]) => {
+      const pontos = Math.round(lista.reduce((s, b) => s + b.pontos, 0) * 10) / 10
+      grouped[faixa].push({
+        ...item,
+        id: `${item.id}|${faixa}`,
+        pontos,
+        bases: lista.length,
+        basesList: lista,
+        tier: getTier(lista[0].pontos, item.isSoul),
+        extra: `${lista.length} ${lista.length === 1 ? 'base' : 'bases'}`,
+      })
+    })
   })
   Object.keys(grouped).forEach(tierName => {
     grouped[tierName] = ordenarItens(grouped[tierName], ordem)
@@ -1251,7 +1275,7 @@ export default function Ranking() {
       return Object.values(map)
         .map(r => {
           const pontos = Math.round(r.pontos * 10) / 10
-          return { ...r, pontos, tier: getTier(pontos, type === 'soul'), isSoul: type === 'soul', extra: `${r.bases} ${r.bases === 1 ? 'base' : 'bases'}` }
+          return { ...r, pontos, tier: null, isSoul: type === 'soul', extra: `${r.bases} ${r.bases === 1 ? 'base' : 'bases'}` }
         })
         .sort((a, b) => b.pontos - a.pontos)
     }
