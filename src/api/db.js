@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { SheetsAPI } from './sheetsApi'
 import { avaliarMetaDiscipulado, isDesafioDiscipulado, membroContaNaBase, META_PERCENTUAL } from '../lib/discipuladoMeta'
+import { isDesafioBatismo } from '../lib/desafiosPontuacao'
 
 // Usado para preencher `created_by` nos métodos dedicados abaixo (Notas,
 // Desafios, Discípulos, Batismos, Biblioteca) — só na criação, nunca em
@@ -1895,9 +1896,7 @@ export const db = {
       this.getDesafiosCatalogo(tipo),
     ])
     const count = batismos.length
-    const batismoDesafio = catalogo.find(
-      d => d.periodicidade === 'anual' && /batismo/i.test(d.nome ?? '')
-    )
+    const batismoDesafio = catalogo.find(isDesafioBatismo)
     if (!batismoDesafio) return
 
     // Preserva data e obs que o usuário possa ter registrado manualmente

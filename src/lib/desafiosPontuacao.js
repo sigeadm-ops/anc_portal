@@ -111,3 +111,10 @@ export function descartarNotasDuplicadas(rows, { keyOf, ordemOf }) {
     return !chave || maisRecente.get(chave) === row
   })
 }
+
+// Desafio anual de batismo: marcado só pelo sistema (db.syncBatismoDesafio)
+// quando a base registra um batismo na aba Batismos. Vale uma vez no ano —
+// batismos seguintes não somam mais pontos.
+export function isDesafioBatismo(desafio) {
+  return Boolean(desafio) && desafio.periodicidade === 'anual' && /batismo/i.test(desafio.nome ?? '')
+}

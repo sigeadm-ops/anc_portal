@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTable } from '../hooks/useTable'
 import { useAuthStore } from '../store/authStore'
 import { db } from '../api/db'
-import { gerarSabados, divisorCadencia } from '../lib/desafiosPontuacao'
+import { gerarSabados, divisorCadencia, isDesafioBatismo } from '../lib/desafiosPontuacao'
 import { isDesafioDiscipulado } from '../lib/discipuladoMeta'
 
 function fmtDataCurta(iso) {
@@ -847,8 +847,12 @@ export default function Desafios() {
                               key={`${d.id}-anual`}
                               desafio={d}
                               marco={getMarco(d.id, null)}
-                              isLocked={isDesafioDiscipulado(d)}
-                              lockedMsg={isDesafioDiscipulado(d) ? '🔒 Automático: marcado pelo sistema conforme os cartões da aba Discípulos' : null}
+                              isLocked={isDesafioDiscipulado(d) || isDesafioBatismo(d)}
+                              lockedMsg={
+                                isDesafioDiscipulado(d) ? '🔒 Automático: marcado pelo sistema conforme os cartões da aba Discípulos'
+                                : isDesafioBatismo(d) ? '🔒 Automático: marcado pelo sistema ao registrar um batismo na aba Batismos'
+                                : null
+                              }
                               onSalvar={({ realizado, data_realizacao, obs }) =>
                                 salvarMarco.mutateAsync({
                                   base_id: baseId, desafio_id: d.id,
