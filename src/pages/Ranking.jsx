@@ -6,7 +6,8 @@ import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useAuthStore } from '../store/authStore'
 import { fmtPontos, fmtNumero, numCSV, downloadCSV } from '../utils/helpers'
-import { gerarSabados, divisorCadencia, isProvaBonus, isProvaTitulo, provasPrevistas, descartarNotasDuplicadas } from '../lib/desafiosPontuacao'
+import { gerarSabados, divisorCadencia, isProvaBonus, isProvaTitulo, provasPrevistas, descartarNotasDuplicadas, isDesafioBatismo } from '../lib/desafiosPontuacao'
+import { isDesafioDiscipulado } from '../lib/discipuladoMeta'
 
 function anoAtual() { return new Date().getFullYear() }
 
@@ -1014,11 +1015,23 @@ export default function Ranking() {
       const batismosPts   = batismosPtsPorBase[baseId]  ?? 0
       const pontos = Math.round((weeklyPts + mensaisPts + pontuaisPts + anuaisPts + notaMedia + discipulosPts + batismosPts) * 10) / 10
 
+      // Batismo e discipulado pontuam por desafio anual do catálogo. No
+      // detalhamento esses pontos saem de "Desafios" e vão para as colunas
+      // próprias — o total da base não muda.
+      const anualRealizadoPts = (filtro) => desafiosAnuais.filter(filtro).reduce((s, d) => {
+        const done = todosMarcos.some(m =>
+          m.base_id === baseId && m.desafio_id === d.id && m.trimestre == null && m.mes == null && m.realizado
+        )
+        return s + (done ? Number(d.pontos_total) : 0)
+      }, 0)
+      const batismoDesafioPts    = anualRealizadoPts(isDesafioBatismo)
+      const discipuloDesafioPts  = anualRealizadoPts(d => isDesafioDiscipulado(d) && !isDesafioBatismo(d))
+
       const componentes = {
-        desafios: Math.round((weeklyPts + mensaisPts + pontuaisPts + anuaisPts) * 10) / 10,
+        desafios: Math.round((weeklyPts + mensaisPts + pontuaisPts + anuaisPts - batismoDesafioPts - discipuloDesafioPts) * 10) / 10,
         notas: Math.round(notaMedia * 10) / 10,
-        discipulos: Math.round(discipulosPts * 10) / 10,
-        batismos: Math.round(batismosPts * 10) / 10,
+        discipulos: Math.round((discipulosPts + discipuloDesafioPts) * 10) / 10,
+        batismos: Math.round((batismosPts + batismoDesafioPts) * 10) / 10,
       }
 
       const primeirosCartoes = {}
@@ -1404,29 +1417,20 @@ export default function Ranking() {
         'Provas lançadas': a.count, 'Pontos (média)': numCSV(a.pontos),
       }))
     } else {
+      // Sempre uma linha por base (nos níveis agrupados, as bases que compõem
+      // cada região/distrito/igreja), com a pontuação esmiuçada por componente.
       const mostrarPosicao = ordemEfetiva === 'pontuacao'
-      const grupos = agruparPorFaixa(listAtual, ordemEfetiva)
-      const linhaBase = (b, agrupamento) => ({
-        'Tipo': 'Base', 'Agrupamento': agrupamento, 'Nome': b.nome, 'Faixa': b.tier?.nome ?? '',
-        'Região': b.regiao, 'Distrito': b.distrito, 'Igreja': b.igreja, 'Qtd. bases': '',
-        'Pontos': numCSV(b.pontos), 'Desafios': numCSV(b.componentes?.desafios), 'Notas': numCSV(b.componentes?.notas),
-        'Discipulado': numCSV(b.componentes?.discipulos), 'Batismos': numCSV(b.componentes?.batismos),
-      })
+      const basesDoRecorte = listAtual.flatMap(item => item.basesList ?? [item])
+      const grupos = agruparPorFaixa(basesDoRecorte, ordemEfetiva)
       linhas = TIERS_ORDER
         .filter(tier => tierFilter === 'Todas' || tierFilter === tier.nome)
-        .flatMap(tier => grupos[tier.nome].flatMap(item => {
-          const posicao = pos => ({ 'Posição na faixa': mostrarPosicao ? pos : '' })
-          if (!item.basesList) return [{ ...posicao(item.posicao), ...linhaBase(item, '') }]
-          return [
-            {
-              ...posicao(item.posicao),
-              'Tipo': colunaNomePrint, 'Agrupamento': '', 'Nome': item.nome, 'Faixa': item.tier?.nome ?? '',
-              'Região': '', 'Distrito': '', 'Igreja': '', 'Qtd. bases': item.bases,
-              'Pontos': numCSV(item.pontos), 'Desafios': '', 'Notas': '', 'Discipulado': '', 'Batismos': '',
-            },
-            ...ordenarItens(item.basesList, ordemEfetiva).map(b => ({ ...posicao(''), ...linhaBase(b, item.nome) })),
-          ]
-        }))
+        .flatMap(tier => grupos[tier.nome].map(b => ({
+          'Posição na faixa': mostrarPosicao ? b.posicao : '',
+          'Base': b.nome, 'Faixa': tier.nome,
+          'Região': b.regiao, 'Distrito': b.distrito, 'Igreja': b.igreja,
+          'Pontos': numCSV(b.pontos), 'Desafios': numCSV(b.componentes?.desafios), 'Notas': numCSV(b.componentes?.notas),
+          'Discipulado': numCSV(b.componentes?.discipulos), 'Batismos': numCSV(b.componentes?.batismos),
+        })))
     }
     if (!linhas.length) return toast.error('Nada para exportar com os filtros atuais.')
     const slug = normalizeBaseName(`${currentTipo}_${view}_${nomeNivel}`).replace(/[^a-z0-9]+/g, '_')
