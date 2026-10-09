@@ -6,6 +6,8 @@ import { fmtPontos } from '../utils/helpers'
 
 function anoAtual() { return new Date().getFullYear() }
 
+const TELAO_REFRESH_MS = 10 * 60 * 1000
+
 const VISOES = [
   { key: 'bases',  label: '⛪ Bases' },
   { key: 'alunos', label: '🎒 Alunos' },
@@ -89,7 +91,10 @@ export default function Podio() {
   const [suspense, setSuspense] = useState(false)
   const [revelados, setRevelados] = useState(3)
 
-  const { regioes, distritos, scoresPorBase, rankingAlunos, isLoading } = useRankingData(type, ano)
+  // O telão fica horas aberto: a recarga completa periódica é só de 10 em 10
+  // minutos (as mudanças chegam na hora pelo realtime) e também é forçada a
+  // cada revelação, pra garantir o número certo no momento do anúncio.
+  const { regioes, distritos, scoresPorBase, rankingAlunos, isLoading, atualizar } = useRankingData(type, ano, { refreshMs: TELAO_REFRESH_MS })
 
   // Os filtros ficam na URL: sobrevivem a um recarregamento no meio do evento.
   function setFiltros(mudancas) {
@@ -157,13 +162,18 @@ export default function Podio() {
   const lugarOculto = lugar => emSuspense && lugar <= 3 - revelados
   const proximoLugar = emSuspense && revelados < 3 ? 3 - revelados : null
 
+  function revelarProximo() {
+    setRevelados(r => Math.min(3, r + 1))
+    atualizar()
+  }
+
   // Avança com clique no palco, Espaço, Enter ou →; volta com ←
   useEffect(() => {
     if (!emSuspense) return
     const onKey = e => {
       if ([' ', 'Enter', 'ArrowRight', 'PageDown'].includes(e.key)) {
         e.preventDefault()
-        setRevelados(r => Math.min(3, r + 1))
+        revelarProximo()
       } else if (['ArrowLeft', 'PageUp'].includes(e.key)) {
         const minimo = 3 - Math.min(3, classificacao.length)
         setRevelados(r => Math.max(minimo, r - 1))
@@ -171,7 +181,7 @@ export default function Podio() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [emSuspense, classificacao.length])
+  }, [emSuspense, classificacao.length, atualizar]) // eslint-disable-line react-hooks/exhaustive-deps
   const labelPts = visao === 'alunos' ? 'média' : 'pts'
   const media = classificacao.length
     ? classificacao.reduce((s, x) => s + x.pontos, 0) / classificacao.length
@@ -264,7 +274,7 @@ export default function Podio() {
         <div className="podio-corpo">
           <section
             className={`podio-painel podio-palco ${proximoLugar ? 'clicavel' : ''}`}
-            onClick={proximoLugar ? () => setRevelados(r => Math.min(3, r + 1)) : undefined}
+            onClick={proximoLugar ? revelarProximo : undefined}
           >
             {emSuspense && revelados === 3 && primeiro && <Confetes />}
             <div className="podio-numeros">

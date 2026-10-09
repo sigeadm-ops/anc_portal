@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTable } from './useTable'
 import { db } from '../api/db'
@@ -9,11 +9,13 @@ import { normalizeBaseName } from '../lib/ranking'
 // Carrega os dados e calcula a pontuação do ranking (bases e alunos) de um
 // ministério ('soul' | 'teen') em um ano. Fonte única dos números exibidos
 // na página de Ranking e no telão de premiação.
-export function useRankingData(type, ano) {
+// `refreshMs`: intervalo da recarga completa periódica. `atualizar()` força
+// essa recarga na hora.
+export function useRankingData(type, ano, { refreshMs = 2 * 60 * 1000 } = {}) {
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
   // Rede de segurança apenas: mudanças chegam na hora pelo useRealtimeSync.
   // Intervalo curto aqui estoura a cota de egress do Supabase.
-  const LIVE_REFRESH_MS = 2 * 60 * 1000
+  const LIVE_REFRESH_MS = refreshMs
 
   const { data: bases = [] }     = useTable('Bases')
   const { data: regioes = [] }   = useTable('Regiao')
@@ -27,35 +29,35 @@ export function useRankingData(type, ano) {
     staleTime: 10 * 60 * 1000,
   })
 
-  const { data: trimestresConfig = [] } = useQuery({
+  const { data: trimestresConfig = [], refetch: refetchTrimestres } = useQuery({
     queryKey: ['configuracao_trimestres', ano],
     queryFn: () => db.getConfiguracaoTrimestres(ano),
     refetchInterval: LIVE_REFRESH_MS,
     refetchOnWindowFocus: true,
   })
 
-  const { data: todosRegistros = [], isLoading: loadingReg } = useQuery({
+  const { data: todosRegistros = [], isLoading: loadingReg, refetch: refetchRegistros } = useQuery({
     queryKey: ['ranking_registros', ano],
     queryFn: () => db.getAllRegistrosPorAno(ano),
     refetchInterval: LIVE_REFRESH_MS,
     refetchOnWindowFocus: true,
   })
 
-  const { data: todosMarcos = [], isLoading: loadingMar } = useQuery({
+  const { data: todosMarcos = [], isLoading: loadingMar, refetch: refetchMarcos } = useQuery({
     queryKey: ['ranking_marcos', ano],
     queryFn: () => db.getAllMarcosPorAno(ano),
     refetchInterval: LIVE_REFRESH_MS,
     refetchOnWindowFocus: true,
   })
 
-  const { data: todasNotas = [], isLoading: loadingNotas } = useQuery({
+  const { data: todasNotas = [], isLoading: loadingNotas, refetch: refetchNotas } = useQuery({
     queryKey: ['ranking_notas', ano, type],
     queryFn: () => type === 'soul' ? db.getAllNotasSoulPorAno(ano) : db.getAllNotasTeenPorAno(ano),
     refetchInterval: LIVE_REFRESH_MS,
     refetchOnWindowFocus: true,
   })
 
-  const { data: discipulosCartoes = [], isLoading: loadingDisc } = useQuery({
+  const { data: discipulosCartoes = [], isLoading: loadingDisc, refetch: refetchCartoes } = useQuery({
     queryKey: ['all_discipulos_cartoes', ano],
     queryFn: () => db.getAllDiscipulosCartoesPorAno(ano),
     staleTime: 2 * 60 * 1000,
@@ -69,7 +71,7 @@ export function useRankingData(type, ano) {
     staleTime: 10 * 60 * 1000,
   })
 
-  const { data: batismosRegs = [], isLoading: loadingBat } = useQuery({
+  const { data: batismosRegs = [], isLoading: loadingBat, refetch: refetchBatismos } = useQuery({
     queryKey: ['all_batismos', ano],
     queryFn: () => db.getAllBatismosPorAno(ano),
     staleTime: 2 * 60 * 1000,
@@ -84,6 +86,15 @@ export function useRankingData(type, ano) {
   })
 
   const isLoading = loadingReg || loadingMar || loadingNotas || loadingDisc || loadingBat
+
+  const atualizar = useCallback(
+    // cancelRefetch: false — cliques seguidos aproveitam a recarga em andamento.
+    () => Promise.all(
+      [refetchTrimestres, refetchRegistros, refetchMarcos, refetchNotas, refetchCartoes, refetchBatismos]
+        .map(refetch => refetch({ cancelRefetch: false }))
+    ),
+    [refetchTrimestres, refetchRegistros, refetchMarcos, refetchNotas, refetchCartoes, refetchBatismos]
+  )
 
   const basesFiltradas = useMemo(() =>
     bases.filter(b => {
@@ -520,6 +531,6 @@ export function useRankingData(type, ano) {
 
   return {
     regioes, distritos, igrejas, basesFiltradas,
-    todasNotas, basePorAluno, scoresPorBase, rankingAlunos, isLoading,
+    todasNotas, basePorAluno, scoresPorBase, rankingAlunos, isLoading, atualizar,
   }
 }
