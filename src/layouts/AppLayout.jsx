@@ -3,7 +3,6 @@ import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../store/authStore'
 import { supabase } from '../api/supabase'
-import { useRealtimeSync } from '../hooks/useRealtimeSync'
 import { useAppVersion } from '../hooks/useAppVersion'
 
 // Sub-abas da página de Desafios, expostas como atalhos diretos no menu
@@ -130,7 +129,6 @@ export default function AppLayout() {
     return currentTab === subTab
   }
 
-  useRealtimeSync()
   useAppVersion()
 
   const handleRefresh = useCallback(async () => {

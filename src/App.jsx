@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
+import { useRealtimeSync } from './hooks/useRealtimeSync'
 import AppLayout from './layouts/AppLayout'
 import Dashboard from './pages/Dashboard'
 import Bases from './pages/Bases'
@@ -65,6 +66,10 @@ function AdminRoute({ children }) {
 }
 
 export default function App() {
+  // No App (e não no AppLayout) pra valer também no telão de premiação,
+  // que fica fora do layout com sidebar.
+  useRealtimeSync()
+
   return (
     <>
       <GlobalErrorModal />

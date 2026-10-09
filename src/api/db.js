@@ -61,6 +61,15 @@ const ORDER_CONFIG = {
 
 const SELECT_PAGE_SIZE = 1000
 
+// Colunas das notas usadas no ranking — compartilhadas pela carga completa
+// do ano e pela releitura parcial por ID (sincronização incremental).
+const NOTAS_RANKING_COLS = 'id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo, id_provas, lancado_em'
+const IDS_POR_REQUISICAO = 200
+
+function temNotaValida(row) {
+  return Number.isFinite(Number(row.nota ?? row.Nota))
+}
+
 function getPkCandidates(table) {
   if (table === 'Provas') return ['id', 'id_provas']
   return [PK_MAP[table] || 'id']
@@ -663,6 +672,36 @@ export const db = {
     }
 
     return normalized
+  },
+
+  // ── SELECT parcial por PK (sincronização incremental do realtime) ──
+  // Relê só as linhas informadas, pela mesma fonte e com as mesmas colunas
+  // da carga completa. IDs que não voltarem foram excluídos (ou saíram do
+  // filtro) e devem ser retirados do cache por quem chamou.
+  async getLinhasPorIds(source, ids, { pk = 'id', select = '*' } = {}) {
+    const rows = []
+    for (let i = 0; i < ids.length; i += IDS_POR_REQUISICAO) {
+      const { data, error } = await supabase
+        .from(source)
+        .select(select)
+        .in(pk, ids.slice(i, i + IDS_POR_REQUISICAO))
+      if (error) throw error
+      rows.push(...(data ?? []))
+    }
+    return rows
+  },
+
+  // Mesmo formato de linha do getAll(table), só para os IDs informados.
+  async getPorIds(table, ids) {
+    const rows = await this.getLinhasPorIds(VIEW_MAP[table] || table, ids, { pk: getPkCandidates(table)[0] })
+    return filterNotasByTable(table, rows).map((row) => normalizeReadRow(table, row))
+  },
+
+  // Mesmo formato de linha de getAllNotasTeenPorAno / getAllNotasSoulPorAno.
+  async getNotasRankingPorIds(type, ids) {
+    const source = type === 'soul' ? 'vw_notas_soul' : 'vw_notas_teen'
+    const rows = await this.getLinhasPorIds(source, ids, { select: NOTAS_RANKING_COLS })
+    return rows.filter(temNotaValida)
   },
 
   async getById(table, id) {
@@ -1342,34 +1381,28 @@ export const db = {
     const { data, error } = await fetchAllRows((from, to) =>
       supabase
         .from('vw_notas_teen')
-        .select('id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo, id_provas, lancado_em')
+        .select(NOTAS_RANKING_COLS)
         .gte('data', `${ano}-01-01`)
         .lte('data', `${ano}-12-31`)
         .order('id', { ascending: true })
         .range(from, to)
     )
     if (error) throw error
-    return (data ?? []).filter(r => {
-      const n = Number(r.nota ?? r.Nota)
-      return Number.isFinite(n)
-    })
+    return (data ?? []).filter(temNotaValida)
   },
 
   async getAllNotasSoulPorAno(ano) {
     const { data, error } = await fetchAllRows((from, to) =>
       supabase
         .from('vw_notas_soul')
-        .select('id, id_membros, Membros, nome_aluno, id_base, Base, id_regiao, Regiao, id_distritos, Distritos, id_igrejas, Igrejas, data, nota, Nota, titulo, Titulo, id_provas, lancado_em')
+        .select(NOTAS_RANKING_COLS)
         .gte('data', `${ano}-01-01`)
         .lte('data', `${ano}-12-31`)
         .order('id', { ascending: true })
         .range(from, to)
     )
     if (error) throw error
-    return (data ?? []).filter(r => {
-      const n = Number(r.nota ?? r.Nota)
-      return Number.isFinite(n)
-    })
+    return (data ?? []).filter(temNotaValida)
   },
 
   async getNotasTeenPorBaseETrimestre(base_id, primeiro_sabado, ultimo_sabado, base_nome = null) {
