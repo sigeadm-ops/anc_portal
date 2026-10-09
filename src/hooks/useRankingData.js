@@ -11,7 +11,9 @@ import { normalizeBaseName } from '../lib/ranking'
 // na página de Ranking e no telão de premiação.
 export function useRankingData(type, ano) {
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
-  const LIVE_REFRESH_MS = 8000
+  // Rede de segurança apenas: mudanças chegam na hora pelo useRealtimeSync.
+  // Intervalo curto aqui estoura a cota de egress do Supabase.
+  const LIVE_REFRESH_MS = 2 * 60 * 1000
 
   const { data: bases = [] }     = useTable('Bases')
   const { data: regioes = [] }   = useTable('Regiao')
