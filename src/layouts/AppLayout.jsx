@@ -336,6 +336,7 @@ export default function AppLayout() {
                   : 'Verificando...'}
             </span>
           </div>
+          <div className="nav-label">Versão {__APP_VERSION__}</div>
         </div>
       </aside>
 
