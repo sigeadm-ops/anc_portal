@@ -9,6 +9,7 @@ import { db } from '../api/db'
 import { useUIStore } from '../store/uiStore'
 import { parseError } from '../lib/errorMessages'
 import { supabase } from '../api/supabase'
+import { regiaoEstaTravada } from '../lib/travaRegiao'
 
 function fmtDataBR(iso) {
   if (!iso) return '—'
@@ -1004,35 +1005,66 @@ function DiscipulosConfig() {
 // ── Trava de lançamentos por região ─────────────────────────────
 // Região travada: o portal público não grava nada das bases dela (notas,
 // membros, bases, desafios, discípulos, batismos, fotos); só o admin altera.
+// A trava pode valer na hora ou ter início agendado (bloqueio_inicio).
 // A checagem real fica em lib/travaRegiao.js (chamada pelo db.js).
+function fmtDataHoraBR(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+}
+
 function TravaRegioesConfig() {
   const qc = useQueryClient()
   const logActivity = useAuthStore(s => s.logActivity)
   const { data: regioes, isLoading } = useTable('Regiao')
   const [salvando, setSalvando] = useState(null)
+  const [agenda, setAgenda] = useState({}) // id_regiao -> 'yyyy-mm-ddThh:mm' (horário local)
 
   const colunaExiste = (regioes || []).some(r => r.bloqueio_lancamentos !== undefined)
+  const colunaInicioExiste = (regioes || []).some(r => r.bloqueio_inicio !== undefined)
 
-  async function alternar(r) {
-    const travar = !r.bloqueio_lancamentos
-    const msg = travar
-      ? `Travar os lançamentos da região ${r.Regiao}?
-
-O portal público não vai conseguir lançar nem alterar nada das bases desta região até você liberar de novo.`
-      : `Liberar os lançamentos da região ${r.Regiao}?`
-    if (!confirm(msg)) return
+  async function salvar(r, { travar, inicio = null }, msgConfirm, msgLog, msgOk) {
+    if (!confirm(msgConfirm)) return
+    const payload = { bloqueio_lancamentos: travar }
+    if (colunaInicioExiste) payload.bloqueio_inicio = travar ? inicio : null
 
     setSalvando(r.id_regiao)
     const { error } = await supabase
       .from('Regiao')
-      .update({ bloqueio_lancamentos: travar })
+      .update(payload)
       .eq('id_regiao', r.id_regiao)
     setSalvando(null)
 
     if (error) { toast.error('Erro ao salvar: ' + error.message); return }
-    await logActivity(travar ? 'trava_regiao_on' : 'trava_regiao_off', 'Regiao', `${travar ? 'Travou' : 'Liberou'} os lançamentos da região ${r.Regiao}`)
+    await logActivity(travar ? 'trava_regiao_on' : 'trava_regiao_off', 'Regiao', msgLog)
     qc.invalidateQueries({ queryKey: ['Regiao'] })
-    toast.success(travar ? `🔒 Região ${r.Regiao} travada.` : `🔓 Região ${r.Regiao} liberada.`)
+    setAgenda(a => ({ ...a, [r.id_regiao]: '' }))
+    toast.success(msgOk)
+  }
+
+  function travarAgora(r) {
+    salvar(r, { travar: true },
+      `Travar agora os lançamentos da região ${r.Regiao}?\n\nO portal público não vai conseguir lançar nem alterar nada das bases desta região até você liberar de novo.`,
+      `Travou os lançamentos da região ${r.Regiao}`,
+      `🔒 Região ${r.Regiao} travada.`)
+  }
+
+  function agendar(r) {
+    const valor = agenda[r.id_regiao]
+    if (!valor) { toast.error('Informe a data e a hora em que a trava começa.'); return }
+    const inicio = new Date(valor)
+    if (Number.isNaN(inicio.getTime())) { toast.error('Data/hora inválida.'); return }
+    const quando = fmtDataHoraBR(inicio.toISOString())
+    salvar(r, { travar: true, inicio: inicio.toISOString() },
+      `Agendar a trava da região ${r.Regiao} para ${quando}?\n\nAté lá os lançamentos seguem liberados; a partir desse horário o portal público não lança nem altera nada das bases desta região.`,
+      `Agendou a trava da região ${r.Regiao} para ${quando}`,
+      `🕒 Trava da região ${r.Regiao} agendada para ${quando}.`)
+  }
+
+  function liberar(r) {
+    salvar(r, { travar: false },
+      `Liberar os lançamentos da região ${r.Regiao}?`,
+      `Liberou os lançamentos da região ${r.Regiao}`,
+      `🔓 Região ${r.Regiao} liberada.`)
   }
 
   return (
@@ -1042,6 +1074,7 @@ O portal público não vai conseguir lançar nem alterar nada das bases desta re
         <p style={{ fontSize: 13, opacity: 0.8, marginTop: 0 }}>
           Com a região travada, o portal público não lança nem altera nada das bases dela
           (notas, membros, bases, desafios, discípulos, batismos e fotos). O administrativo continua liberado.
+          A trava pode valer na hora ou ser agendada para começar numa data e hora.
         </p>
         {!isLoading && !colunaExiste && (
           <div className="status-bar warn" style={{ marginBottom: 12 }}>
@@ -1049,29 +1082,60 @@ O portal público não vai conseguir lançar nem alterar nada das bases desta re
             {' '}<code>20261013100000_regiao_bloqueio_lancamentos.sql</code> no Supabase.
           </div>
         )}
+        {!isLoading && colunaExiste && !colunaInicioExiste && (
+          <div className="status-bar warn" style={{ marginBottom: 12 }}>
+            ⚠️ Para agendar a trava, aplique a migração
+            {' '}<code>20261013200000_regiao_bloqueio_inicio.sql</code> no Supabase.
+          </div>
+        )}
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Região</th><th>Situação</th><th>Ação</th></tr></thead>
+            <thead><tr><th>Região</th><th>Situação</th><th>Ações</th></tr></thead>
             <tbody>
-              {isLoading ? <tr><td colSpan={3} className="center">Carregando...</td></tr> : (regioes || []).map(r => (
-                <tr key={r.id_regiao}>
-                  <td><strong>{r.Regiao}</strong></td>
-                  <td>
-                    {r.bloqueio_lancamentos
-                      ? <span className="chip chip-warn">🔒 Lançamentos travados</span>
-                      : <span className="chip chip-good">🔓 Liberada</span>}
-                  </td>
-                  <td>
-                    <button
-                      className={`btn btn-sm ${r.bloqueio_lancamentos ? 'btn-primary' : 'btn-outline'}`}
-                      onClick={() => alternar(r)}
-                      disabled={!colunaExiste || salvando === r.id_regiao}
-                    >
-                      {salvando === r.id_regiao ? <span className="spinner" /> : r.bloqueio_lancamentos ? '🔓 Liberar' : '🔒 Travar'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {isLoading ? <tr><td colSpan={3} className="center">Carregando...</td></tr> : (regioes || []).map(r => {
+                const emVigor = regiaoEstaTravada(r)
+                const agendada = r.bloqueio_lancamentos && !emVigor
+                const ocupado = !colunaExiste || salvando === r.id_regiao
+                return (
+                  <tr key={r.id_regiao}>
+                    <td><strong>{r.Regiao}</strong></td>
+                    <td>
+                      {emVigor
+                        ? <span className="chip chip-warn">🔒 Travada{r.bloqueio_inicio ? ` desde ${fmtDataHoraBR(r.bloqueio_inicio)}` : ''}</span>
+                        : agendada
+                          ? <span className="chip chip-warn">🕒 Liberada até a trava em {fmtDataHoraBR(r.bloqueio_inicio)}</span>
+                          : <span className="chip chip-good">🔓 Liberada</span>}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        {r.bloqueio_lancamentos && (
+                          <button className="btn btn-sm btn-primary" onClick={() => liberar(r)} disabled={ocupado}>
+                            {salvando === r.id_regiao ? <span className="spinner" /> : '🔓 Liberar'}
+                          </button>
+                        )}
+                        {!emVigor && (
+                          <button className="btn btn-sm btn-outline" onClick={() => travarAgora(r)} disabled={ocupado}>
+                            🔒 Travar agora
+                          </button>
+                        )}
+                        {!emVigor && colunaInicioExiste && (
+                          <>
+                            <input
+                              type="datetime-local"
+                              value={agenda[r.id_regiao] ?? ''}
+                              onChange={e => setAgenda(a => ({ ...a, [r.id_regiao]: e.target.value }))}
+                              style={{ width: 200 }}
+                            />
+                            <button className="btn btn-sm btn-outline" onClick={() => agendar(r)} disabled={ocupado}>
+                              🕒 Agendar trava
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

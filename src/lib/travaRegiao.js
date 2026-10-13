@@ -4,7 +4,8 @@ import { useAuthStore } from '../store/authStore'
 // ================================================================
 // Trava de lançamentos por região (coluna Regiao.bloqueio_lancamentos)
 // Enquanto a região está travada, o portal público não grava nada das
-// bases dela; o administrativo (isAdmin) continua liberado.
+// bases dela; o administrativo (isAdmin) continua liberado. A trava pode
+// ter início agendado (Regiao.bloqueio_inicio); vazio = vale na hora.
 // Liga/desliga em Configurações Gerais → Regiões.
 // ================================================================
 
@@ -20,6 +21,13 @@ export function mensagemTravaRegiao(nomeRegiao) {
   return `Os lançamentos da região ${nomeRegiao || ''} estão travados no momento. Alterações só podem ser feitas pelo administrativo.`.replace(/\s+/g, ' ')
 }
 
+// Trava ligada e já em vigor (início agendado já passou, ou sem início).
+export function regiaoEstaTravada(regiao, agora = new Date()) {
+  if (!regiao?.bloqueio_lancamentos) return false
+  if (!regiao.bloqueio_inicio) return true
+  return agora >= new Date(regiao.bloqueio_inicio)
+}
+
 export function isLancamentoBloqueado(err) {
   return err?.name === 'LancamentoBloqueadoError'
 }
@@ -33,10 +41,10 @@ function texto(value) {
 async function nomeSeRegiaoTravada(id_regiao) {
   const { data, error } = await supabase
     .from('Regiao')
-    .select('id_regiao, Regiao, bloqueio_lancamentos')
+    .select('id_regiao, Regiao, bloqueio_lancamentos, bloqueio_inicio')
     .eq('id_regiao', id_regiao)
     .maybeSingle()
-  if (error || !data?.bloqueio_lancamentos) return null
+  if (error || !regiaoEstaTravada(data)) return null
   return data.Regiao || id_regiao
 }
 
