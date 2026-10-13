@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import { SheetsAPI } from './sheetsApi'
 import { avaliarMetaDiscipulado, isDesafioDiscipulado, membroContaNaBase, META_PERCENTUAL } from '../lib/discipuladoMeta'
 import { isDesafioBatismo } from '../lib/desafiosPontuacao'
+import { garantirLancamentoLiberado, garantirRegistroLiberado } from '../lib/travaRegiao'
 
 // Usado para preencher `created_by` nos métodos dedicados abaixo (Notas,
 // Desafios, Discípulos, Batismos, Biblioteca) — só na criação, nunca em
@@ -57,6 +58,30 @@ const ORDER_CONFIG = {
   Regiao:     { columns: ['Regiao', 'regiao', 'nome'], ascending: true },
   Distritos:  { columns: ['Distritos', 'distrito', 'nome'], ascending: true },
   Igrejas:    { columns: ['Igrejas', 'igreja', 'nome'], ascending: true },
+}
+
+// Tabelas genéricas (insert/update/delete) presas a uma base — sujeitas à
+// trava de lançamentos por região (lib/travaRegiao.js).
+const TRAVA_BASE_COL = {
+  Notas_Teen: 'id_base',
+  Notas_Soul: 'id_base',
+  Membros:    'id_base',
+  Bases:      'id_base',
+}
+
+async function garantirTravaRegistro(table, id) {
+  const baseCol = TRAVA_BASE_COL[table]
+  if (!baseCol) return
+  await garantirRegistroLiberado(TABLE_MAP[table] || table, PK_MAP[table], id, baseCol)
+}
+
+async function garantirTravaNovoRegistro(table, record) {
+  if (!TRAVA_BASE_COL[table] || !record) return
+  await garantirLancamentoLiberado({
+    id_base: record.id_base ?? record.base_id,
+    id_regiao: record.id_regiao ?? record.regiao_id,
+    id_igrejas: record.id_igrejas ?? record.igreja_id,
+  })
 }
 
 const SELECT_PAGE_SIZE = 1000
@@ -745,6 +770,7 @@ export const db = {
 
   // ── INSERT ──────────────────────────────────────────────────
   async insert(table, record) {
+    await garantirTravaNovoRegistro(table, record)
     const target = TABLE_MAP[table] || table
     const mappedRecord = mapWriteRecord(table, record)
     // Remove id vazio/nulo para que o DEFAULT do banco seja usado
@@ -761,6 +787,8 @@ export const db = {
 
   // ── UPDATE ──────────────────────────────────────────────────
   async update(table, id, record) {
+    await garantirTravaRegistro(table, id)
+    await garantirTravaNovoRegistro(table, record)
     const target = TABLE_MAP[table] || table
     const payload = mapWriteRecord(table, record)
     const candidates = getPkCandidates(table)
@@ -802,6 +830,7 @@ export const db = {
 
   // ── DELETE ──────────────────────────────────────────────────
   async delete(table, id) {
+    await garantirTravaRegistro(table, id)
     const target = TABLE_MAP[table] || table
     const candidates = getPkCandidates(table)
 
@@ -866,6 +895,7 @@ export const db = {
   // ao membro, e só então o registro do membro em si.
   async excluirMembroCascata(id_membros) {
     if (!id_membros) throw new Error('id_membros é obrigatório para exclusão em cascata.')
+    await garantirTravaRegistro('Membros', id_membros)
 
     await supabase.from('Notas_Teen').delete().eq('id_membros', id_membros)
     await supabase.from('Notas_Soul').delete().eq('id_membros', id_membros)
@@ -916,6 +946,7 @@ export const db = {
   // presos direto na base, os próprios membros, e só então a base.
   async excluirBaseCascata(id_base) {
     if (!id_base) throw new Error('id_base é obrigatório para exclusão em cascata.')
+    await garantirLancamentoLiberado({ id_base })
 
     await supabase.from('Notas_Teen').delete().eq('id_base', id_base)
     await supabase.from('Notas_Soul').delete().eq('id_base', id_base)
@@ -934,6 +965,7 @@ export const db = {
 
   // ── NOTAS: atualiza uma linha, com retry para colunas ausentes ──
   async updateNota(tableName, id, fields) {
+    await garantirRegistroLiberado(tableName, 'id', id, 'id_base')
     let payload = Object.fromEntries(
       Object.entries(fields).map(([k, v]) => [k, v === '' ? null : v])
     )
@@ -997,6 +1029,7 @@ export const db = {
 
   // ── NOTAS: insere todas as linhas de um formulário ──────────
   async insertNotasForm(rows, _ignored, tableName = 'Notas_Teen') {
+    await garantirLancamentoLiberado({ id_bases: (rows || []).map(r => r?.id_base) })
     const created_by = await getCurrentUserId()
     let payload = created_by ? rows.map(row => ({ ...row, created_by })) : rows
     // Em bases legadas, algumas colunas não existem (ex.: Versao/SalvoEm).
@@ -1608,6 +1641,7 @@ export const db = {
   },
 
   async createDiscipulosCartao({ membro_id, base_id, ano, tipo = 'G148 Teen', nome, departamento, descricao, data_inicio, data_fim, observacoes_professor, foto_url }) {
+    await garantirLancamentoLiberado({ id_base: base_id })
     const { data: ultimoCartao, error: ultimoCartaoError } = await supabase
       .from('discipulos_cartoes')
       .select('ordem')
@@ -1647,6 +1681,7 @@ export const db = {
   },
 
   async updateDiscipulosCartao({ id, nome, departamento, descricao, data_inicio, data_fim, observacoes_professor, foto_url }) {
+    await garantirRegistroLiberado('discipulos_cartoes', 'id', id)
     const payload = {
       nome: nome?.trim() || 'Cartão',
       departamento: departamento?.trim() || null,
@@ -1668,6 +1703,7 @@ export const db = {
   },
 
   async deleteDiscipulosCartao(id) {
+    await garantirRegistroLiberado('discipulos_cartoes', 'id', id)
     const { error } = await supabase
       .from('discipulos_cartoes')
       .delete()
@@ -1748,6 +1784,7 @@ export const db = {
 
   async upsertDiscipuloRegistro({ membro_id, base_id, card_id, requisito_id, ano, realizado, data_realizacao, responsavel }) {
     if (!card_id) throw new Error('Cartão do discipulado não informado.')
+    await garantirLancamentoLiberado({ id_base: base_id })
 
     const payload = {
       membro_id,
@@ -1835,6 +1872,8 @@ export const db = {
   },
 
   async upsertBatismo({ id, base_id, nome, mes, ano, foto_url, obs }) {
+    await garantirLancamentoLiberado({ id_base: base_id })
+    if (id) await garantirRegistroLiberado('batismos_registros', 'id', id)
     const payload = {
       base_id,
       nome,
@@ -1864,6 +1903,7 @@ export const db = {
   },
 
   async deleteBatismo(id) {
+    await garantirRegistroLiberado('batismos_registros', 'id', id)
     const { error } = await supabase.from('batismos_registros').delete().eq('id', id)
     if (error) throw error
     return true
@@ -1982,6 +2022,8 @@ export const db = {
   },
 
   async upsertBibliotecaImagem({ id, base_id, titulo, url, data_upload, observacao }) {
+    await garantirLancamentoLiberado({ id_base: base_id })
+    if (id) await garantirRegistroLiberado('biblioteca_imagens', 'id', id)
     const payload = {
       base_id,
       titulo,
@@ -2010,6 +2052,7 @@ export const db = {
   },
 
   async deleteBibliotecaImagem(id) {
+    await garantirRegistroLiberado('biblioteca_imagens', 'id', id)
     const { error } = await supabase.from('biblioteca_imagens').delete().eq('id', id)
     if (error) throw error
     return true

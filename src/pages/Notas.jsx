@@ -5,6 +5,8 @@ import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import { useAuthStore } from '../store/authStore'
+import { useTravaRegiao } from '../hooks/useTravaRegiao'
+import AvisoTravaRegiao from '../components/ui/AvisoTravaRegiao'
 import { toInputDate, buildBaseLabel, fmtDate } from '../utils/helpers'
 import { marcarDuplicados, corDuplicidade } from '../utils/duplicidade'
 
@@ -50,6 +52,7 @@ export function NotasForm({ tipo, sheetName }) {
   const { data: provas = [] }       = useTable('Provas')
   const { data: todosMembros = [] } = useTable('Membros')
   const isAdmin = useAuthStore(s => s.isAdmin)
+  const { regiaoTravada } = useTravaRegiao()
   const qc = useQueryClient()
 
   function invalidateRankingCaches() {
@@ -503,6 +506,9 @@ export function NotasForm({ tipo, sheetName }) {
     onError: (err) => toast.error(`Erro ao salvar: ${err.message}`),
   })
 
+  // Trava de lançamentos da região da base escolhida (admin liberado)
+  const travaRegiao = regiaoTravada(meta.id_regiao)
+
   function handleSalvar() {
     save.mutate()
   }
@@ -595,6 +601,8 @@ export function NotasForm({ tipo, sheetName }) {
           </div>
         )}
       </div>
+
+      <AvisoTravaRegiao regiao={travaRegiao} />
 
       {/* ── Duplicidade na base inteira: aparece direto ao escolher a base,
           antes mesmo de selecionar a prova — mesma criança + mesma prova
@@ -836,7 +844,8 @@ export function NotasForm({ tipo, sheetName }) {
         <button
           className="btn btn-primary"
           onClick={handleSalvar}
-          disabled={save.isPending || !metaOk || validRows.length === 0}
+          disabled={save.isPending || !metaOk || validRows.length === 0 || Boolean(travaRegiao)}
+          title={travaRegiao ? `Lançamentos da região ${travaRegiao} travados` : undefined}
         >
           {save.isPending
             ? <><span className="spinner" /> Salvando…</>
@@ -854,6 +863,7 @@ function NotasHistorico({ tipo, tableName }) {
   const { data: bases }  = useTable('Bases')
   const { data: provas } = useTable('Provas')
   const isAdmin = useAuthStore(s => s.isAdmin)
+  const { regiaoTravada } = useTravaRegiao()
   const qc = useQueryClient()
 
   function invalidateRankingCaches() {
@@ -1155,13 +1165,19 @@ function NotasHistorico({ tipo, tableName }) {
                       <td style={{ textAlign: 'center' }}>{n.trezentos_estudo      || '—'}</td>
                       <td style={{ fontSize: 11, opacity: 0.7 }}>{n.observacoes || n.Observacoes || '—'}</td>
                       <td style={{ display: 'flex', gap: 4, flexWrap: 'nowrap' }}>
-                        <button className="btn-icon" onClick={() => startEdit(n)} title="Editar nota">✏️</button>
-                        <button
-                          className="btn-icon danger"
-                          onClick={() => confirmDelete(n)}
-                          disabled={deleteMutation.isPending}
-                          title="Excluir nota"
-                        >🗑️</button>
+                        {regiaoTravada(n.id_regiao) ? (
+                          <span title={`Lançamentos da região ${regiaoTravada(n.id_regiao)} travados — só o administrativo altera`} style={{ opacity: 0.6 }}>🔒</span>
+                        ) : (
+                          <>
+                            <button className="btn-icon" onClick={() => startEdit(n)} title="Editar nota">✏️</button>
+                            <button
+                              className="btn-icon danger"
+                              onClick={() => confirmDelete(n)}
+                              disabled={deleteMutation.isPending}
+                              title="Excluir nota"
+                            >🗑️</button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   )

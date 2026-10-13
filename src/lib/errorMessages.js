@@ -1,5 +1,7 @@
 // Traduz erros técnicos do backend para mensagens amigáveis em português
 
+import { isLancamentoBloqueado } from './travaRegiao'
+
 const ACTIONS = {
   insert: 'salvar',
   update: 'atualizar',
@@ -27,6 +29,15 @@ const FK_MESSAGES = {
 export function parseError(err, table = '', action = 'delete') {
   const msg = err?.message || ''
   const verb = ACTIONS[action] || action
+
+  // Trava de lançamentos da região (lib/travaRegiao.js)
+  if (isLancamentoBloqueado(err)) {
+    return {
+      title: 'Lançamentos travados',
+      message: msg,
+      contactAdmin: true,
+    }
+  }
 
   // Violação de chave estrangeira (ex.: excluir base com membros)
   if (/foreign key constraint/i.test(msg)) {

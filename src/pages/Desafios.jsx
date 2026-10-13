@@ -5,6 +5,9 @@ import toast from 'react-hot-toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTable } from '../hooks/useTable'
 import { useAuthStore } from '../store/authStore'
+import { useTravaRegiao } from '../hooks/useTravaRegiao'
+import AvisoTravaRegiao from '../components/ui/AvisoTravaRegiao'
+import { garantirLancamentoLiberado } from '../lib/travaRegiao'
 import { db } from '../api/db'
 import { gerarSabados, divisorCadencia, isDesafioBatismo } from '../lib/desafiosPontuacao'
 import { isDesafioDiscipulado } from '../lib/discipuladoMeta'
@@ -91,6 +94,7 @@ export default function Desafios() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const isAdmin = useAuthStore(s => s.isAdmin)
+  const { regiaoTravada } = useTravaRegiao()
   const { data: bases = [] }    = useTable('Bases')
   const { data: regioes = [] }  = useTable('Regiao')
   const { data: distritos = [] } = useTable('Distritos')
@@ -204,7 +208,10 @@ export default function Desafios() {
 
   // ── Trava de trimestre encerrado ─────────────────────────────
   const isPastTrimestre = Boolean(cfgTrim && cfgTrim.ultimo_sabado < hojeStr)
-  const isLocked = TRIMESTRE_LOCK_ATIVO && isPastTrimestre && !isAdmin
+  // Trava de lançamentos da região da base (premiação etc.) — admin liberado
+  const travaRegiao = regiaoTravada(selectedBase?.id_regiao)
+  const isLocked = (TRIMESTRE_LOCK_ATIVO && isPastTrimestre && !isAdmin) || Boolean(travaRegiao)
+  const motivoTrava = travaRegiao ? `Lançamentos da região ${travaRegiao} travados` : 'Trimestre encerrado'
 
   // ── Dados da base ────────────────────────────────────────────
   const { data: registros = [] } = useQuery({
@@ -293,8 +300,10 @@ export default function Desafios() {
   const marcosKey    = ['desafios_marcos', baseId, ano]
 
   const toggleRegistro = useMutation({
-    mutationFn: ({ desafio_id, data_sabado, realizado }) =>
-      db.upsertRegistro({ base_id: baseId, desafio_id, data_sabado, realizado }),
+    mutationFn: async ({ desafio_id, data_sabado, realizado }) => {
+      await garantirLancamentoLiberado({ id_base: baseId })
+      return db.upsertRegistro({ base_id: baseId, desafio_id, data_sabado, realizado })
+    },
     onMutate: ({ desafio_id, data_sabado }) => {
       const key = `${desafio_id}-${data_sabado}`
       setSavingCells(s => new Set(s).add(key))
@@ -308,13 +317,19 @@ export default function Desafios() {
   })
 
   const salvarMarco = useMutation({
-    mutationFn: (payload) => db.upsertMarco(payload),
+    mutationFn: async (payload) => {
+      await garantirLancamentoLiberado({ id_base: payload.base_id })
+      return db.upsertMarco(payload)
+    },
     onSuccess:  () => qc.invalidateQueries({ queryKey: marcosKey }),
     onError:    (e) => toast.error('Erro: ' + e.message),
   })
 
   const toggleMarcoMensal = useMutation({
-    mutationFn: (payload) => db.upsertMarco(payload),
+    mutationFn: async (payload) => {
+      await garantirLancamentoLiberado({ id_base: payload.base_id })
+      return db.upsertMarco(payload)
+    },
     onSuccess:  () => qc.invalidateQueries({ queryKey: marcosKey }),
     onError:    (e) => toast.error('Erro ao salvar: ' + e.message),
   })
@@ -465,7 +480,9 @@ export default function Desafios() {
         <div className="card-header">
           <div className="card-title">🏅 Desafios {currentTipo}</div>
           {isLocked && (
-            <span className="chip chip-warn">🔒 Trimestre encerrado — ative 🔓 Auditoria para editar</span>
+            <span className="chip chip-warn">
+              {travaRegiao ? `🔒 ${motivoTrava}` : '🔒 Trimestre encerrado — ative 🔓 Auditoria para editar'}
+            </span>
           )}
         </div>
 
@@ -529,6 +546,8 @@ export default function Desafios() {
           </div>
         )}
       </div>
+
+      {baseId && <AvisoTravaRegiao regiao={travaRegiao} style={{ marginBottom: 0 }} />}
 
       {/* ── Tab bar principal (visível quando base selecionada) ── */}
       {baseId && (
@@ -603,7 +622,7 @@ export default function Desafios() {
       {baseId && cfgTrim && (
         <>
           {/* ── Banner de trava ── */}
-          {isLocked && (
+          {isLocked && !travaRegiao && (
             <div className="card" style={{
               padding: '14px 20px', marginBottom: 0,
               background: 'rgba(255,180,0,.08)', borderColor: 'var(--warn)',
@@ -718,7 +737,7 @@ export default function Desafios() {
                                         }}
                                         title={
                                           isAutoOnly ? 'Preenchido automaticamente via lançamento de notas'
-                                          : isLocked ? 'Trimestre encerrado'
+                                          : isLocked ? motivoTrava
                                           : isFuturo ? 'Sábado futuro'
                                           : checked ? 'Realizado — clique para desmarcar'
                                           : 'Não realizado — clique para marcar'
@@ -847,9 +866,10 @@ export default function Desafios() {
                               key={`${d.id}-anual`}
                               desafio={d}
                               marco={getMarco(d.id, null)}
-                              isLocked={isDesafioDiscipulado(d) || isDesafioBatismo(d)}
+                              isLocked={Boolean(travaRegiao) || isDesafioDiscipulado(d) || isDesafioBatismo(d)}
                               lockedMsg={
-                                isDesafioDiscipulado(d) ? '🔒 Automático: marcado pelo sistema conforme os cartões da aba Discípulos'
+                                travaRegiao ? `🔒 ${motivoTrava}`
+                                : isDesafioDiscipulado(d) ? '🔒 Automático: marcado pelo sistema conforme os cartões da aba Discípulos'
                                 : isDesafioBatismo(d) ? '🔒 Automático: marcado pelo sistema ao registrar um batismo na aba Batismos'
                                 : null
                               }
@@ -1304,6 +1324,8 @@ function DiscipulosTab({ baseId, ano, tipo, isAdmin, qc, isSoul }) {
   // Atualiza cartão já existente no DB (inclui upload ou remoção de foto)
   const saveMetaCartao = useMutation({
     mutationFn: async (payload) => {
+      // Checa a trava antes do upload, pra não deixar arquivo órfão no storage
+      await garantirLancamentoLiberado({ id_base: baseId })
       let foto_url = payload.foto_url ?? null
       const removePhoto = fotoRemoved[payload.id]
       const file = fotoFiles[payload.id]
@@ -1763,6 +1785,7 @@ function BatismosTab({ baseId, ano, tipo, isAdmin, isSoul }) {
 
   const upsert = useMutation({
     mutationFn: async ({ id, nome, mes, obs, file }) => {
+      await garantirLancamentoLiberado({ id_base: baseId })
       let foto_url = editItem?.foto_url ?? null
       if (file) {
         const path = `batismos/${baseId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`
@@ -1934,6 +1957,7 @@ function FotosTab({ baseId, isAdmin }) {
 
   const upsert = useMutation({
     mutationFn: async ({ id, titulo, data_upload, observacao, file }) => {
+      await garantirLancamentoLiberado({ id_base: baseId })
       let url = editItem?.url ?? ''
       if (file) {
         const path = `biblioteca/${baseId}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`

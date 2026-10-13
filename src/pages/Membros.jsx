@@ -5,6 +5,8 @@ import toast from 'react-hot-toast'
 import { useTable } from '../hooks/useTable'
 import { db } from '../api/db'
 import ConfirmCascadeDeleteModal from '../components/ConfirmCascadeDeleteModal'
+import AvisoTravaRegiao from '../components/ui/AvisoTravaRegiao'
+import { useTravaRegiao } from '../hooks/useTravaRegiao'
 import { today, fmtDate, toInputDate, buildBaseLabel, findDuplicateBaseGroups, formatBaseId, namesLikelySamePerson } from '../utils/helpers'
 
 const LABELS_DEPENDENCIA_MEMBRO = {
@@ -38,6 +40,7 @@ export default function Membros() {
   const { data, isLoading, insert, update } = useTable('Membros', 'MEMBROS')
   const qc = useQueryClient()
   const { data: bases } = useTable('Bases')
+  const { regiaoTravada } = useTravaRegiao()
 
   const [header, setHeader] = useState({ ...EMPTY_HEADER, Tipo: currentTipo })
   const [staging, setStaging] = useState([newRow()])
@@ -58,6 +61,10 @@ export default function Membros() {
   const baseById = useMemo(() => {
     return new Map((bases || []).map((base) => [String(base.id_base), base]))
   }, [bases])
+
+  // Trava de lançamentos por região (admin liberado)
+  const travaDaBase = (id_base) => regiaoTravada(baseById.get(String(id_base))?.id_regiao)
+  const travaHeader = travaDaBase(header.id_base)
 
   // Membros já cadastrados na base selecionada no formulário de cadastro em massa
   const membrosDaBaseSelecionada = useMemo(() => {
@@ -298,6 +305,8 @@ export default function Membros() {
                 </div>
               )
             })()}
+
+            <AvisoTravaRegiao regiao={travaHeader} style={{ marginTop: 12, marginBottom: 0 }} />
           </div>
 
           <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
@@ -353,7 +362,7 @@ export default function Membros() {
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 20px' }}>
           <button className="btn btn-outline" onClick={() => { setStaging([newRow()]); setHeader({ ...EMPTY_HEADER, Tipo: currentTipo }) }}>Limpar tudo</button>
-          <button className="btn btn-primary" onClick={handleSaveAll} disabled={saving || !headerOk || !validRows.length}>
+          <button className="btn btn-primary" onClick={handleSaveAll} disabled={saving || !headerOk || !validRows.length || Boolean(travaHeader)}>
             {saving
               ? <><span className="spinner" /> Salvando…</>
               : `💾 Salvar ${validRows.length} membro${validRows.length !== 1 ? 's' : ''}`}
@@ -411,8 +420,14 @@ export default function Membros() {
                     <td><span className={`chip ${m.Status === 'Ativo' ? 'chip-good' : 'chip-muted'}`}>{m.Status}</span></td>
                     <td>
                       <div className="td-actions">
-                        <button className="btn-icon" onClick={() => setEditingMembro({ ...m, _originalStatus: m.Status || 'Ativo' })}>✏️</button>
-                        <button className="btn-icon danger" onClick={() => handleDelete(m.id_membros, m.Membros)}>🗑️</button>
+                        {travaDaBase(m.id_base) ? (
+                          <span title={`Lançamentos da região ${travaDaBase(m.id_base)} travados — só o administrativo altera`} style={{ opacity: 0.6 }}>🔒</span>
+                        ) : (
+                          <>
+                            <button className="btn-icon" onClick={() => setEditingMembro({ ...m, _originalStatus: m.Status || 'Ativo' })}>✏️</button>
+                            <button className="btn-icon danger" onClick={() => handleDelete(m.id_membros, m.Membros)}>🗑️</button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

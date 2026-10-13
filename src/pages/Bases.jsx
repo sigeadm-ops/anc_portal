@@ -7,6 +7,8 @@ import { useIgrejas } from '../hooks/useIgrejas'
 import { useAuthStore } from '../store/authStore'
 import { db } from '../api/db'
 import ConfirmCascadeDeleteModal from '../components/ConfirmCascadeDeleteModal'
+import AvisoTravaRegiao from '../components/ui/AvisoTravaRegiao'
+import { useTravaRegiao } from '../hooks/useTravaRegiao'
 import { today, buildBaseLabel, findDuplicateBaseGroups, normalizeBaseName } from '../utils/helpers'
 
 const LABELS_DEPENDENCIA_BASE = {
@@ -34,6 +36,7 @@ export default function Bases() {
   const { type } = useParams()
   const currentTipo = type === 'soul' ? 'Soul+' : 'G148 Teen'
   const isAdmin = useAuthStore(s => s.isAdmin)
+  const { regiaoTravada } = useTravaRegiao()
   const canViewSensitiveContacts = isAdmin
   
   const { data, isLoading, insert, update } = useTable('Bases', 'BASES')
@@ -193,6 +196,11 @@ export default function Bases() {
   }, [data])
 
   const inconsistentGeoCount = inconsistentGeoBases.length
+
+  // Trava de lançamentos por região (admin liberado): vale pra região
+  // escolhida no formulário e, na edição, pra região original da base.
+  const baseEmEdicao = editingId ? (data || []).find(b => String(b.id_base) === String(editingId)) : null
+  const travaForm = regiaoTravada(form.id_regiao) || regiaoTravada(baseEmEdicao?.id_regiao)
 
   return (
     <div>
@@ -360,6 +368,8 @@ export default function Bases() {
             </div>
           </div>
 
+          <AvisoTravaRegiao regiao={travaForm} style={{ marginTop: 18, marginBottom: 0 }} />
+
           <div style={{ display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' }}>
             <button
               type="button"
@@ -371,7 +381,7 @@ export default function Bases() {
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={insert.isPending || update.isPending}
+              disabled={insert.isPending || update.isPending || Boolean(travaForm)}
             >
               {(insert.isPending || update.isPending)
                 ? <span className="spinner" />
@@ -448,8 +458,14 @@ export default function Bases() {
                     </td>
                     <td>
                       <div className="td-actions">
-                        <button className="btn-icon" onClick={() => startEdit(b)} title="Editar">✏️</button>
-                        <button className="btn-icon danger" onClick={() => handleDelete(b.id_base, b.Base)} title="Excluir">🗑️</button>
+                        {regiaoTravada(b.id_regiao) ? (
+                          <span title={`Lançamentos da região ${regiaoTravada(b.id_regiao)} travados — só o administrativo altera`} style={{ opacity: 0.6 }}>🔒</span>
+                        ) : (
+                          <>
+                            <button className="btn-icon" onClick={() => startEdit(b)} title="Editar">✏️</button>
+                            <button className="btn-icon danger" onClick={() => handleDelete(b.id_base, b.Base)} title="Excluir">🗑️</button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

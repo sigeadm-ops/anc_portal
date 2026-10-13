@@ -131,7 +131,12 @@ export default function AdminConfig() {
         {activeTab === 'trimestres' && <TrimestresConfig />}
         {activeTab === 'desafios' && <DesafiosCatalogoConfig filterMin={currentMin} />}
         {activeTab === 'disciplos' && <DiscipulosConfig />}
-        {activeTab === 'regioes' && <DimensionCRUD table="Regiao" pk="id_regiao" field="Regiao" label="Região" />}
+        {activeTab === 'regioes' && (
+          <>
+            <TravaRegioesConfig />
+            <DimensionCRUD table="Regiao" pk="id_regiao" field="Regiao" label="Região" />
+          </>
+        )}
         {activeTab === 'distritos' && <DimensionCRUD table="Distritos" pk="id_distritos" field="Distritos" label="Distrito" parentField="id_regiao" parentPkField="id_regiao" parentTable="Regiao" parentLabel="Regiao" />}
         {activeTab === 'igrejas' && <DimensionCRUD table="Igrejas" pk="id_igrejas" field="Igrejas" label="Igreja" parentField="id_distritos" parentPkField="id_distritos" parentTable="Distritos" parentLabel="Distritos" />}
         {activeTab === 'diagnostico' && <DiagnosticoConfig />}
@@ -996,6 +1001,85 @@ function DiscipulosConfig() {
 }
 
 // ── COMPONENTE: Gerenciamento de Dimensões ───────────────────
+// ── Trava de lançamentos por região ─────────────────────────────
+// Região travada: o portal público não grava nada das bases dela (notas,
+// membros, bases, desafios, discípulos, batismos, fotos); só o admin altera.
+// A checagem real fica em lib/travaRegiao.js (chamada pelo db.js).
+function TravaRegioesConfig() {
+  const qc = useQueryClient()
+  const logActivity = useAuthStore(s => s.logActivity)
+  const { data: regioes, isLoading } = useTable('Regiao')
+  const [salvando, setSalvando] = useState(null)
+
+  const colunaExiste = (regioes || []).some(r => r.bloqueio_lancamentos !== undefined)
+
+  async function alternar(r) {
+    const travar = !r.bloqueio_lancamentos
+    const msg = travar
+      ? `Travar os lançamentos da região ${r.Regiao}?
+
+O portal público não vai conseguir lançar nem alterar nada das bases desta região até você liberar de novo.`
+      : `Liberar os lançamentos da região ${r.Regiao}?`
+    if (!confirm(msg)) return
+
+    setSalvando(r.id_regiao)
+    const { error } = await supabase
+      .from('Regiao')
+      .update({ bloqueio_lancamentos: travar })
+      .eq('id_regiao', r.id_regiao)
+    setSalvando(null)
+
+    if (error) { toast.error('Erro ao salvar: ' + error.message); return }
+    await logActivity(travar ? 'trava_regiao_on' : 'trava_regiao_off', 'Regiao', `${travar ? 'Travou' : 'Liberou'} os lançamentos da região ${r.Regiao}`)
+    qc.invalidateQueries({ queryKey: ['Regiao'] })
+    toast.success(travar ? `🔒 Região ${r.Regiao} travada.` : `🔓 Região ${r.Regiao} liberada.`)
+  }
+
+  return (
+    <div className="card section">
+      <div className="card-header"><div className="card-title">🔒 Trava de Lançamentos por Região</div></div>
+      <div className="card-body">
+        <p style={{ fontSize: 13, opacity: 0.8, marginTop: 0 }}>
+          Com a região travada, o portal público não lança nem altera nada das bases dela
+          (notas, membros, bases, desafios, discípulos, batismos e fotos). O administrativo continua liberado.
+        </p>
+        {!isLoading && !colunaExiste && (
+          <div className="status-bar warn" style={{ marginBottom: 12 }}>
+            ⚠️ A coluna <code>bloqueio_lancamentos</code> ainda não existe na tabela Regiao. Aplique a migração
+            {' '}<code>20261013100000_regiao_bloqueio_lancamentos.sql</code> no Supabase.
+          </div>
+        )}
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Região</th><th>Situação</th><th>Ação</th></tr></thead>
+            <tbody>
+              {isLoading ? <tr><td colSpan={3} className="center">Carregando...</td></tr> : (regioes || []).map(r => (
+                <tr key={r.id_regiao}>
+                  <td><strong>{r.Regiao}</strong></td>
+                  <td>
+                    {r.bloqueio_lancamentos
+                      ? <span className="chip chip-warn">🔒 Lançamentos travados</span>
+                      : <span className="chip chip-good">🔓 Liberada</span>}
+                  </td>
+                  <td>
+                    <button
+                      className={`btn btn-sm ${r.bloqueio_lancamentos ? 'btn-primary' : 'btn-outline'}`}
+                      onClick={() => alternar(r)}
+                      disabled={!colunaExiste || salvando === r.id_regiao}
+                    >
+                      {salvando === r.id_regiao ? <span className="spinner" /> : r.bloqueio_lancamentos ? '🔓 Liberar' : '🔒 Travar'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DimensionCRUD({ table, pk, field, label, parentField, parentPkField, parentTable, parentLabel }) {
   const showError = useUIStore(s => s.showError)
   const isAdmin = useAuthStore(s => s.isAdmin)
