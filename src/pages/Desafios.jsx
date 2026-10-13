@@ -2218,7 +2218,7 @@ function ComparativoTab({ baseId, baseNome, tipo, cfgTrim, sabados, catalogo, re
   const statusBySabado = useMemo(() => {
     const entries = sabados.map((sab) => {
       const notasDia = notasByDate[sab] ?? []
-      const temNotas = Boolean(statusBySabado[sab])
+      const temNotas = notasDia.length > 0
       const comunhaoAuto = temNotas && notasDia.some(notaTemComunhaoSim)
       const assidAuto = temNotas
       // Comunhão manual é semanal e independe de notas — verifica registro direto.
