@@ -691,7 +691,12 @@ function DesempenhoTab() {
 
   const isLoading = loadingReg || loadingMar || loadingNotas || loadingDisc || loadingBat
 
-  const basesTeen = useMemo(() => bases.filter(b => b.Tipo === 'G148 Teen'), [bases])
+  const basesTeen = useMemo(() =>
+    bases
+      .filter(b => b.Tipo === 'G148 Teen')
+      .sort((a, b) => String(a.Base ?? a.nome ?? '').trim().localeCompare(String(b.Base ?? b.nome ?? '').trim(), 'pt-BR', { sensitivity: 'base' })),
+    [bases]
+  )
   const basesTeenFiltradas = useMemo(() => {
     return basesTeen.filter((b) => !baseFiltro || String(b.id_base ?? b.id) === String(baseFiltro))
   }, [basesTeen, baseFiltro])
