@@ -221,7 +221,7 @@ export default function Desafios() {
   })
 
   // Notas do trimestre — carregadas sempre (não só ao abrir o Comparativo)
-  const { data: notasTrim = [] } = useQuery({
+  const { data: notasTrim = [], isSuccess: notasTrimCarregadas } = useQuery({
     queryKey: ['notas_trimestre_comparativo', currentTipo, baseId, selectedBase?.Base ?? '', cfgTrim?.primeiro_sabado, cfgTrim?.ultimo_sabado],
     queryFn: () => {
       const isSoul = currentTipo.toLowerCase().includes('soul')
@@ -233,9 +233,12 @@ export default function Desafios() {
     staleTime: 2 * 60 * 1000,
   })
 
-  // Auto-sync desafios administrativos sempre que notas forem carregadas
+  // Auto-sync desafios administrativos sempre que notas forem carregadas.
+  // Só depois que as notas DESTE trimestre chegaram: antes disso notasTrim é
+  // o [] padrão, e sincronizar com ele gravava "não realizado" em todos os
+  // sábados, em corrida com a sincronização certa (pontuação mudava sozinha).
   useEffect(() => {
-    if (!baseId || !cfgTrim || !catalogo?.length) return
+    if (!baseId || !cfgTrim || !catalogo?.length || !notasTrimCarregadas) return
 
     let cancelled = false
 
@@ -280,7 +283,7 @@ export default function Desafios() {
 
     syncAdminDesafios()
     return () => { cancelled = true }
-  }, [baseId, currentTipo, catalogo, notasTrim, sabados, cfgTrim, qc, ano])
+  }, [baseId, currentTipo, catalogo, notasTrim, notasTrimCarregadas, sabados, cfgTrim, qc, ano])
 
   // Registros do ano inteiro para o acumulado
   const { data: registrosAno = [] } = useQuery({

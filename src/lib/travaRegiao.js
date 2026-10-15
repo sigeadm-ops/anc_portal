@@ -72,6 +72,26 @@ async function regiaoDaIgreja(id_igrejas) {
   return texto(distrito?.id_regiao)
 }
 
+// Base está numa região travada — vale também para o admin. Usado pelas
+// marcações automáticas (Assiduidade/Comunhão a partir das notas), que ficam
+// congeladas enquanto a região estiver travada: a pontuação não muda sozinha
+// só porque alguém abriu a tela de Desafios. Cache curto porque a
+// sincronização chama isso uma vez por sábado do trimestre.
+const CACHE_TRAVA_MS = 30 * 1000
+const cacheTravaBase = new Map() // id_base -> { travada, em }
+
+export async function baseEmRegiaoTravada(id_base) {
+  const base = texto(id_base)
+  if (!base) return false
+  const cache = cacheTravaBase.get(base)
+  if (cache && Date.now() - cache.em < CACHE_TRAVA_MS) return cache.travada
+
+  const r = await regiaoDaBase(base)
+  const travada = r ? Boolean(await nomeSeRegiaoTravada(r)) : false
+  cacheTravaBase.set(base, { travada, em: Date.now() })
+  return travada
+}
+
 // Lança LancamentoBloqueadoError se alguma das bases/regiões informadas
 // estiver numa região travada. Admin nunca é barrado.
 export async function garantirLancamentoLiberado({ id_regiao, id_base, id_bases, id_igrejas } = {}) {

@@ -981,6 +981,8 @@ function NotasHistorico({ tipo, tableName }) {
         data_sabado: dataSabado,
         rows,
         responsavel: nota.responsavel ?? nota.Responsavel ?? null,
+        // `rows` são todas as notas que sobraram no sábado
+        permitirDesmarcar: true,
       })
 
       return true

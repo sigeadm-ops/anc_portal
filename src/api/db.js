@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import { SheetsAPI } from './sheetsApi'
 import { avaliarMetaDiscipulado, isDesafioDiscipulado, membroContaNaBase, META_PERCENTUAL } from '../lib/discipuladoMeta'
 import { isDesafioBatismo } from '../lib/desafiosPontuacao'
-import { garantirLancamentoLiberado, garantirRegistroLiberado } from '../lib/travaRegiao'
+import { garantirLancamentoLiberado, garantirRegistroLiberado, baseEmRegiaoTravada } from '../lib/travaRegiao'
 
 // Usado para preencher `created_by` nos métodos dedicados abaixo (Notas,
 // Desafios, Discípulos, Batismos, Biblioteca) — só na criação, nunca em
@@ -1094,10 +1094,19 @@ export const db = {
     return statusByMembro
   },
 
-  async syncDesafiosAdministrativosFromNotas({ base_id, tipo, data_sabado, rows, responsavel, catalogo }) {
+  // Marca Assiduidade / Cartão / Comunhão do sábado a partir das notas.
+  // Por padrão só MARCA: nunca desmarca o que já está realizado (marcação
+  // manual, ou `rows` parcial — ex.: salvar só parte das notas do dia).
+  // `permitirDesmarcar` é só para quem passa TODAS as notas do sábado depois
+  // de uma exclusão. Base em região travada fica congelada (nem admin).
+  async syncDesafiosAdministrativosFromNotas({ base_id, tipo, data_sabado, rows, responsavel, catalogo, permitirDesmarcar = false }) {
     const sabado = normalizeDateOnly(data_sabado)
     if (!base_id || !tipo || !sabado || !Array.isArray(rows)) {
       return { assiduidade: false, cartao: false }
+    }
+
+    if (await baseEmRegiaoTravada(base_id)) {
+      return { assiduidade: false, cartao: false, comunhao: false, congelado: true }
     }
 
     const desafiosCatalogo = Array.isArray(catalogo) && catalogo.length > 0
@@ -1108,40 +1117,40 @@ export const db = {
     const assiduidadeOk = rows.length > 0
     const cartaoOk = rows.length > 0 && rows.every(notaPreencheCartao)
     const comunhaoOk = rows.length > 0 && rows.some((nota) => isSimLike(nota?.comunhao ?? nota?.Comunhao))
-    const tasks = []
 
-    desafiosAdmin.assiduidade.forEach((desafio) => {
-      tasks.push(this.upsertRegistro({
+    const alvos = [
+      ...desafiosAdmin.assiduidade.map((desafio) => ({ desafio, ok: assiduidadeOk, obs: 'Automático via lançamento de notas' })),
+      ...desafiosAdmin.cartao.map((desafio) => ({ desafio, ok: cartaoOk, obs: 'Automático via preenchimento das notas' })),
+      ...desafiosAdmin.comunhao.map((desafio) => ({ desafio, ok: comunhaoOk, obs: 'Automático via campo Comunhão nas notas' })),
+    ]
+    if (alvos.length === 0) {
+      return { assiduidade: assiduidadeOk, cartao: cartaoOk, comunhao: comunhaoOk }
+    }
+
+    // Estado atual: só grava o que muda de fato
+    const { data: existentes, error } = await supabase
+      .from('desafios_registros')
+      .select('desafio_id, realizado')
+      .eq('base_id', base_id)
+      .eq('data_sabado', sabado)
+      .in('desafio_id', alvos.map(a => a.desafio.id))
+    if (error) throw error
+    const realizadoAtual = new Map((existentes ?? []).map(r => [r.desafio_id, Boolean(r.realizado)]))
+
+    const tasks = alvos
+      .filter(({ desafio, ok }) => {
+        const atual = realizadoAtual.get(desafio.id)
+        if (ok) return atual !== true
+        return permitirDesmarcar && atual === true
+      })
+      .map(({ desafio, ok, obs }) => this.upsertRegistro({
         base_id,
         desafio_id: desafio.id,
         data_sabado: sabado,
-        realizado: assiduidadeOk,
-        responsavel: assiduidadeOk ? (responsavel ?? null) : null,
-        obs: assiduidadeOk ? 'Automático via lançamento de notas' : null,
+        realizado: ok,
+        responsavel: ok ? (responsavel ?? null) : null,
+        obs: ok ? obs : null,
       }))
-    })
-
-    desafiosAdmin.cartao.forEach((desafio) => {
-      tasks.push(this.upsertRegistro({
-        base_id,
-        desafio_id: desafio.id,
-        data_sabado: sabado,
-        realizado: cartaoOk,
-        responsavel: cartaoOk ? (responsavel ?? null) : null,
-        obs: cartaoOk ? 'Automático via preenchimento das notas' : null,
-      }))
-    })
-
-    desafiosAdmin.comunhao.forEach((desafio) => {
-      tasks.push(this.upsertRegistro({
-        base_id,
-        desafio_id: desafio.id,
-        data_sabado: sabado,
-        realizado: comunhaoOk,
-        responsavel: comunhaoOk ? (responsavel ?? null) : null,
-        obs: comunhaoOk ? 'Automático via campo Comunhão nas notas' : null,
-      }))
-    })
 
     if (tasks.length > 0) {
       await Promise.all(tasks)
